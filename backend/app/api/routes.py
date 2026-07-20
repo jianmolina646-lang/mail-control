@@ -9,10 +9,16 @@ from sqlalchemy.orm import Session, joinedload
 
 from ..core import crypto
 from ..core.db import get_db
-from ..core.security import create_access_token, get_current_user, verify_password
+from ..core.security import (
+    create_access_token,
+    get_current_user,
+    hash_password,
+    verify_password,
+)
 from ..models.models import Alert, MailAccount, Message, User
 from ..schemas.schemas import (
     AlertOut,
+    ChangePasswordIn,
     MailAccountIn,
     MailAccountOut,
     MailAccountUpdate,
@@ -46,6 +52,23 @@ def login(form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get
 @router.get("/auth/me", response_model=UserOut)
 def me(user: User = Depends(get_current_user)):
     return user
+
+
+@router.post("/change-password")
+def change_password(
+    data: ChangePasswordIn,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if not verify_password(data.current_password, user.hashed_password):
+        raise HTTPException(status_code=400, detail="La contraseña actual es incorrecta")
+    if data.current_password == data.new_password:
+        raise HTTPException(
+            status_code=400, detail="La nueva contraseña debe ser distinta a la actual"
+        )
+    user.hashed_password = hash_password(data.new_password)
+    db.commit()
+    return {"ok": True}
 
 
 # --- Cuentas de correo ---

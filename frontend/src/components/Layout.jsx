@@ -6,6 +6,7 @@ const links = [
   { to: "/", label: "Bandeja", icon: "📥", end: true },
   { to: "/alertas", label: "Alertas críticas", icon: "🚨" },
   { to: "/cuentas", label: "Cuentas", icon: "🗃️" },
+  { to: "/seguridad", label: "Seguridad", icon: "🔐" },
 ];
 
 export default function Layout() {

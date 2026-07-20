@@ -8,6 +8,7 @@ import Login from "./pages/Login";
 import Inbox from "./pages/Inbox";
 import Alerts from "./pages/Alerts";
 import Accounts from "./pages/Accounts";
+import Security from "./pages/Security";
 
 function Protected({ children }) {
   return getToken() ? children : <Navigate to="/login" replace />;
@@ -28,6 +29,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(
           <Route path="/" element={<Inbox />} />
           <Route path="/alertas" element={<Alerts />} />
           <Route path="/cuentas" element={<Accounts />} />
+          <Route path="/seguridad" element={<Security />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
