@@ -148,18 +148,28 @@ docker compose up -d db redis backend worker beat frontend
 docker compose ps
 ```
 
-### 6. SSL (HTTPS con Certbot)
+### 6. Nginx + SSL
+
+**Opción A — VPS compartido (recomendada; la tienda ya usa los puertos 80/443):**
+el panel corre en `127.0.0.1:8081` y el nginx del host lo publica en el
+subdominio `panel.ecormecejhelizstore.com`:
 
 ```bash
-# Emite el certificado real y deja el proxy con HTTPS
-CERTBOT_EMAIL=tucorreo@dominio.com ./deploy/init-ssl.sh
-
-# El contenedor certbot renueva solo cada 12h; para forzar:
-docker compose run --rm certbot renew
-docker compose exec proxy nginx -s reload
+sudo cp deploy/nginx/host-panel.conf /etc/nginx/sites-available/mail-control
+sudo ln -s /etc/nginx/sites-available/mail-control /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+sudo certbot --nginx -d panel.ecormecejhelizstore.com
 ```
 
-Listo: entrá a **https://ecormecejhelizstore.com** y logueate con
+**Opción B — VPS dedicado (puertos 80/443 libres):** usar el proxy propio del
+compose (perfil `standalone`):
+
+```bash
+docker compose --profile standalone up -d proxy certbot
+CERTBOT_EMAIL=tucorreo@dominio.com ./deploy/init-ssl.sh
+```
+
+Listo: entrá a **https://panel.ecormecejhelizstore.com** y logueate con
 `ADMIN_EMAIL` / `ADMIN_PASSWORD`.
 
 ---

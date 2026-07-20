@@ -3,7 +3,7 @@
 # Correr UNA vez, después de levantar los contenedores por primera vez.
 set -euo pipefail
 
-DOMAIN="ecormecejhelizstore.com"
+DOMAIN="panel.ecormecejhelizstore.com"
 EMAIL="${CERTBOT_EMAIL:-admin@ecormecejhelizstore.com}"
 CONF="./deploy/certbot/conf"
 WWW="./deploy/certbot/www"
@@ -26,7 +26,7 @@ docker compose up -d proxy
 echo ">> Pidiendo certificado real a Let's Encrypt…"
 docker compose run --rm --entrypoint "\
   certbot certonly --webroot -w /var/www/certbot \
-  --email $EMAIL -d $DOMAIN -d www.$DOMAIN \
+  --email $EMAIL -d $DOMAIN \
   --rsa-key-size 2048 --agree-tos --force-renewal --no-eff-email" certbot
 
 echo ">> Recargando nginx con el certificado real…"

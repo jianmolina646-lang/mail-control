@@ -76,10 +76,16 @@ services:
     restart: unless-stopped
     depends_on:
       - backend
+    # Solo accesible desde el propio VPS; el nginx del host hace de proxy público.
+    ports:
+      - "127.0.0.1:8081:80"
     mem_limit: 96m
 
-  # Proxy público: termina SSL (Certbot) y enruta al frontend/backend.
+  # Proxy público standalone (perfil opcional): usar SOLO en un VPS dedicado
+  # donde los puertos 80/443 estén libres. En un VPS compartido (con otra web),
+  # usar el nginx del host con deploy/nginx/host-panel.conf.
   proxy:
+    profiles: ["standalone"]
     image: nginx:1.27-alpine
     restart: unless-stopped
     ports:
@@ -96,6 +102,7 @@ services:
 
   # Certbot: renueva el certificado (se corre a demanda / cron en el host).
   certbot:
+    profiles: ["standalone"]
     image: certbot/certbot:latest
     volumes:
       - ./deploy/certbot/conf:/etc/letsencrypt
