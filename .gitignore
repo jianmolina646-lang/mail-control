@@ -1,0 +1,9 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+node_modules/
+dist/
+deploy/certbot/
+*.log
+.DS_Store

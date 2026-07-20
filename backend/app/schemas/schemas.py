@@ -1,0 +1,107 @@
+"""Schemas Pydantic (entrada/salida de la API)."""
+
+from datetime import datetime
+
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
+
+
+# --- Auth ---
+class Token(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+
+
+class LoginIn(BaseModel):
+    email: EmailStr
+    password: str
+
+
+class UserOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    email: EmailStr
+    is_admin: bool
+
+
+# --- Cuentas de correo ---
+class MailAccountIn(BaseModel):
+    email: EmailStr
+    provider: str = "custom"
+    imap_host: str
+    imap_port: int = 993
+    imap_user: str | None = None
+    password: str = Field(..., description="App Password; se guarda encriptada")
+
+
+class MailAccountUpdate(BaseModel):
+    imap_host: str | None = None
+    imap_port: int | None = None
+    imap_user: str | None = None
+    password: str | None = None
+    is_enabled: bool | None = None
+
+
+class MailAccountOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    email: EmailStr
+    provider: str
+    imap_host: str
+    imap_port: int
+    is_enabled: bool
+    last_synced_at: datetime | None
+    last_status: str
+    last_error: str
+
+
+# --- Mensajes ---
+class MessageListItem(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    account_id: int
+    from_name: str
+    from_addr: str
+    subject: str
+    snippet: str
+    received_at: datetime
+    is_alert: bool
+
+
+class MessageDetail(MessageListItem):
+    to_addr: str
+    body_text: str
+    body_html: str
+
+
+class PaginatedMessages(BaseModel):
+    total: int
+    page: int
+    page_size: int
+    items: list[MessageListItem]
+
+
+# --- Alertas ---
+class AlertOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    service: str
+    keyword: str
+    severity: str
+    resolved: bool
+    created_at: datetime
+    message: MessageListItem
+
+
+class PaginatedAlerts(BaseModel):
+    total: int
+    page: int
+    page_size: int
+    items: list[AlertOut]
+
+
+class StatsOut(BaseModel):
+    accounts_total: int
+    accounts_ok: int
+    accounts_error: int
+    messages_total: int
+    alerts_open: int

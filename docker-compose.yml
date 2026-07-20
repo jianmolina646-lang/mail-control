@@ -1,0 +1,106 @@
+# Mail Control — TEAM JHELIZ
+# Optimizado para VPS de 1 vCPU / 2 GB RAM. Todos los servicios tienen
+# mem_limit para que ninguno consuma toda la máquina (evita OOM kills).
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-mailctl}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mailctl}
+      POSTGRES_DB: ${POSTGRES_DB:-mailctl}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # Postgres afinado para poca RAM.
+    command: >
+      postgres
+      -c shared_buffers=128MB
+      -c effective_cache_size=256MB
+      -c max_connections=40
+      -c work_mem=4MB
+    mem_limit: 512m
+    mem_reservation: 256m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mailctl}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # maxmemory duro + política de descarte para no reventar la RAM.
+    command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru --save "" --appendonly no
+    mem_limit: 160m
+    mem_reservation: 64m
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    mem_limit: 512m
+    mem_reservation: 256m
+
+  worker:
+    build: ./backend
+    restart: unless-stopped
+    env_file: .env
+    command: celery -A app.workers.celery_app.celery_app worker --loglevel=info --concurrency=2 --max-tasks-per-child=50
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    mem_limit: 512m
+    mem_reservation: 256m
+
+  beat:
+    build: ./backend
+    restart: unless-stopped
+    env_file: .env
+    command: celery -A app.workers.celery_app.celery_app beat --loglevel=info
+    depends_on:
+      redis:
+        condition: service_started
+    mem_limit: 128m
+    mem_reservation: 64m
+
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    mem_limit: 96m
+
+  # Proxy público: termina SSL (Certbot) y enruta al frontend/backend.
+  proxy:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/nginx/app.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./deploy/certbot/conf:/etc/letsencrypt:ro
+      - ./deploy/certbot/www:/var/www/certbot:ro
+    depends_on:
+      - frontend
+      - backend
+    mem_limit: 96m
+
+  # Certbot: renueva el certificado (se corre a demanda / cron en el host).
+  certbot:
+    image: certbot/certbot:latest
+    volumes:
+      - ./deploy/certbot/conf:/etc/letsencrypt
+      - ./deploy/certbot/www:/var/www/certbot
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done'"
+
+volumes:
+  pgdata:

@@ -1,0 +1,13 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body, #root { height: 100%; }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: #0b0d12; }
+::-webkit-scrollbar-thumb { background: #2a303c; border-radius: 6px; }
+::-webkit-scrollbar-thumb:hover { background: #3a4150; }
+
+.mail-html-body img { max-width: 100%; height: auto; }
+.mail-html-body a { color: #f87171; }

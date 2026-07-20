@@ -1,0 +1,170 @@
+"""Tareas Celery: escaneo de casillas en chunks con concurrencia estricta."""
+
+from __future__ import annotations
+
+import logging
+from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
+
+import redis as redis_lib
+from sqlalchemy import delete, select
+
+from ..core.config import settings
+from ..core.crypto import decrypt
+from ..core.db import SessionLocal
+from ..models.models import Alert, MailAccount, Message
+from ..services import imap_service, radar
+from .celery_app import celery_app
+
+logger = logging.getLogger(__name__)
+
+_redis = redis_lib.Redis.from_url(settings.REDIS_URL)
+
+# --- Semáforo distribuido: máximo IMAP_MAX_CONCURRENCY conexiones en total ---
+_SEM_KEY = "mailctl:imap_semaphore"
+_SEM_TTL = 60 * 5  # si un worker muere, el slot se libera solo a los 5 min
+
+
+@contextmanager
+def imap_slot(account_id: int):
+    """Reserva un slot del semáforo global de conexiones IMAP."""
+    member = f"acct:{account_id}"
+    acquired = False
+    try:
+        # Limpia slots viejos (crash de workers) y trata de reservar.
+        now = datetime.now(timezone.utc).timestamp()
+        _redis.zremrangebyscore(_SEM_KEY, 0, now - _SEM_TTL)
+        if _redis.zcard(_SEM_KEY) < settings.IMAP_MAX_CONCURRENCY:
+            _redis.zadd(_SEM_KEY, {member: now})
+            acquired = True
+        yield acquired
+    finally:
+        if acquired:
+            _redis.zrem(_SEM_KEY, member)
+
+
+class _AccountProxy:
+    """Adaptador con la contraseña ya desencriptada para imap_service."""
+
+    def __init__(self, acct: MailAccount):
+        self.email = acct.email
+        self.imap_host = acct.imap_host
+        self.imap_port = acct.imap_port
+        self.imap_user = acct.imap_user
+        self.password = decrypt(acct.encrypted_password)
+
+
+@celery_app.task(name="app.workers.tasks.scan_all_accounts")
+def scan_all_accounts() -> int:
+    """Dispara el escaneo de todas las cuentas habilitadas, en chunks chicos."""
+    db = SessionLocal()
+    try:
+        ids = [
+            row[0]
+            for row in db.execute(
+                select(MailAccount.id)
+                .where(MailAccount.is_enabled.is_(True))
+                .order_by(MailAccount.last_synced_at.asc().nulls_first())
+            ).all()
+        ]
+    finally:
+        db.close()
+
+    chunk = max(1, settings.IMAP_CHUNK_SIZE)
+    for i in range(0, len(ids), chunk):
+        scan_account_chunk.delay(ids[i : i + chunk])
+    logger.info("Programados %s chunks para %s cuentas", -(-len(ids) // chunk) if ids else 0, len(ids))
+    return len(ids)
+
+
+@celery_app.task(name="app.workers.tasks.scan_account_chunk", bind=True, max_retries=2)
+def scan_account_chunk(self, account_ids: list[int]) -> int:
+    """Procesa un lote chico de cuentas EN SERIE (una conexión a la vez)."""
+    processed = 0
+    for account_id in account_ids:
+        with imap_slot(account_id) as ok:
+            if not ok:
+                # Semáforo lleno: reintentar este resto más tarde.
+                logger.warning("Semáforo IMAP lleno; re-encolando cuenta %s", account_id)
+                scan_account_chunk.apply_async(args=[[account_id]], countdown=60)
+                continue
+            _sync_one_account(account_id)
+            processed += 1
+    return processed
+
+
+def _sync_one_account(account_id: int) -> None:
+    db = SessionLocal()
+    try:
+        acct = db.get(MailAccount, account_id)
+        if not acct or not acct.is_enabled:
+            return
+        try:
+            parsed = imap_service.fetch_recent(_AccountProxy(acct))
+        except Exception as exc:
+            acct.last_status = "error"
+            acct.last_error = str(exc)[:500]
+            acct.last_synced_at = datetime.now(timezone.utc)
+            db.commit()
+            logger.warning("IMAP error en %s: %s", acct.email, exc)
+            return
+
+        existing = {
+            row[0]
+            for row in db.execute(
+                select(Message.uid).where(Message.account_id == acct.id)
+            ).all()
+        }
+        new_alerts = 0
+        for pm in parsed:
+            if pm.uid in existing:
+                continue
+            is_alert, service, keyword = radar.detect(
+                pm.from_addr, pm.subject, pm.body_text
+            )
+            msg = Message(
+                account_id=acct.id,
+                uid=pm.uid,
+                message_id=pm.message_id,
+                from_addr=pm.from_addr,
+                from_name=pm.from_name,
+                to_addr=pm.to_addr,
+                subject=pm.subject,
+                snippet=pm.snippet,
+                body_text=pm.body_text,
+                body_html=pm.body_html,
+                received_at=pm.received_at,
+                is_alert=is_alert,
+            )
+            db.add(msg)
+            db.flush()
+            if is_alert:
+                db.add(Alert(message_id=msg.id, service=service, keyword=keyword))
+                new_alerts += 1
+
+        acct.last_status = "ok"
+        acct.last_error = ""
+        acct.last_synced_at = datetime.now(timezone.utc)
+        db.commit()
+        if new_alerts:
+            logger.info("%s: %s alertas nuevas", acct.email, new_alerts)
+    finally:
+        db.close()
+
+
+@celery_app.task(name="app.workers.tasks.cleanup_old_messages")
+def cleanup_old_messages(days: int = 30) -> int:
+    """Borra correos de más de `days` días SIN alerta, para cuidar el disco."""
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    db = SessionLocal()
+    try:
+        result = db.execute(
+            delete(Message).where(
+                Message.received_at < cutoff,
+                Message.is_alert.is_(False),
+            )
+        )
+        db.commit()
+        return result.rowcount or 0
+    finally:
+        db.close()
