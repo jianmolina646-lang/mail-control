@@ -1,17 +1,62 @@
 from __future__ import annotations
-
 import email
 from email.header import decode_header, make_header
 from email.utils import parseaddr, parsedate_to_datetime
 from datetime import datetime, timezone
+import json
 import ssl
-
+import urllib.parse
+import urllib.request
 from bs4 import BeautifulSoup
 from imapclient import IMAPClient
-
+from imapclient.exceptions import LoginError
 from ..core.config import settings
-
-
+# Servidor oficial recomendado por Microsoft para IMAP
+MICROSOFT_IMAP_HOST = "outlook.office365.com"
+MICROSOFT_DOMAINS = ("@outlook.", "@hotmail.", "@live.", "@msn.")
+def normalize_imap_host(host: str) -> str:
+    """Normaliza el host IMAP. Reemplaza servidores obsoletos de Microsoft por outlook.office365.com."""
+    if not host:
+        return MICROSOFT_IMAP_HOST
+    h = host.lower().strip()
+    if h in ("imap-mail.outlook.com", "imap.live.com", "outlook.com", "hotmail.com"):
+        return MICROSOFT_IMAP_HOST
+    return host
+def is_microsoft_account(username: str, host: str) -> bool:
+    """Detecta si la cuenta pertenece al ecosistema Microsoft (Outlook/Hotmail/Office365)."""
+    user_lower = (username or "").lower()
+    host_lower = (host or "").lower()
+    if MICROSOFT_IMAP_HOST in host_lower or "outlook" in host_lower or "office365" in host_lower:
+        return True
+    return any(domain in user_lower for domain in MICROSOFT_DOMAINS)
+def refresh_ms_oauth2_token(
+    client_id: str,
+    refresh_token: str,
+    client_secret: str | None = None,
+    tenant: str = "common",
+) -> str:
+    """Obtiene un nuevo Access Token de Microsoft mediante OAuth 2.0 (Refresh Token).
+    Requerido para cuentas @outlook.com / @hotmail.com / Office365 tras la desactivación
+    definitiva de Basic Auth y Contraseñas de Aplicación por parte de Microsoft en sep 2024.
+    """
+    token_url = f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token"
+    payload = {
+        "client_id": client_id,
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_token,
+        "scope": "https://outlook.office.com/IMAP.AccessAsUser.All offline_access",
+    }
+    if client_secret:
+        payload["client_secret"] = client_secret
+    data = urllib.parse.urlencode(payload).encode("utf-8")
+    req = urllib.request.Request(
+        token_url,
+        data=data,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        res_json = json.loads(resp.read().decode("utf-8"))
+        return res_json["access_token"]
 def _decode(value) -> str:
     if not value:
         return ""
@@ -19,21 +64,16 @@ def _decode(value) -> str:
         return str(make_header(decode_header(value)))
     except Exception:
         return str(value)
-
-
 def _html_to_text(html: str) -> str:
     if not html:
         return ""
     try:
-        # Usar html.parser para evitar errores si lxml no está instalado en el sistema
         return BeautifulSoup(html, "html.parser").get_text(" ", strip=True)
     except Exception:
         try:
             return BeautifulSoup(html, "lxml").get_text(" ", strip=True)
         except Exception:
             return ""
-
-
 def _payload(part) -> str:
     try:
         raw = part.get_payload(decode=True)
@@ -43,16 +83,12 @@ def _payload(part) -> str:
         return raw.decode(charset, errors="replace")
     except Exception:
         return ""
-
-
 def _extract_bodies(msg: email.message.Message) -> tuple[str, str]:
     """Devuelve (texto_plano, html). Acota el tamaño para no reventar RAM."""
     text_parts: list[str] = []
     html_parts: list[str] = []
-
     if msg.is_multipart():
         for part in msg.walk():
-            # Omitir partes contenedoras multipartes
             if part.is_multipart():
                 continue
             ctype = part.get_content_type()
@@ -68,73 +104,93 @@ def _extract_bodies(msg: email.message.Message) -> tuple[str, str]:
             html_parts.append(_payload(msg))
         else:
             text_parts.append(_payload(msg))
-
     html = "\n".join(p for p in html_parts if p)[:200_000]
     text = "\n".join(p for p in text_parts if p)
     if not text and html:
         text = _html_to_text(html)
     return text[:100_000], html
-
-
 class ParsedMessage:
     __slots__ = (
         "uid", "message_id", "from_addr", "from_name", "to_addr",
         "subject", "snippet", "body_text", "body_html", "received_at",
     )
-
     def __init__(self, **kw):
         for k in self.__slots__:
             setattr(self, k, kw.get(k))
-
-
 def get_imap_username(account) -> str:
     """Asegura devolver el correo completo requerido por servidores como Outlook.com."""
     user = getattr(account, "imap_user", None) or getattr(account, "email", "")
     if "@" not in user and hasattr(account, "email") and "@" in account.email:
         return account.email
     return user
-
-
+def _login_server(server: IMAPClient, username: str, password: str, account=None, host: str = ""):
+    """Realiza el inicio de sesión IMAP soportando OAuth2 y Basic Auth, con diagnóstico de errores de Microsoft."""
+    # 1. Token OAuth2 directo en el objeto cuenta
+    oauth_token = getattr(account, "oauth_token", None) if account else None
+    # 2. Si la cuenta tiene un método dinámico para refrescar/obtener el token
+    if not oauth_token and account and hasattr(account, "get_oauth_token") and callable(account.get_oauth_token):
+        try:
+            oauth_token = account.get_oauth_token()
+        except Exception:
+            pass
+    # 3. Intentar refrescar token si hay refresh token disponible
+    if not oauth_token and account:
+        rf_token = getattr(account, "oauth_refresh_token", None)
+        client_id = getattr(account, "oauth_client_id", None)
+        if rf_token and client_id:
+            try:
+                client_secret = getattr(account, "oauth_client_secret", None)
+                tenant = getattr(account, "oauth_tenant", "common")
+                oauth_token = refresh_ms_oauth2_token(client_id, rf_token, client_secret=client_secret, tenant=tenant)
+            except Exception:
+                pass
+    if oauth_token:
+        server.oauth2_login(username, oauth_token)
+        return
+    # 4. Intentar login básico
+    try:
+        server.login(username, password)
+    except (LoginError, Exception) as exc:
+        err_msg = str(exc)
+        if "AUTHENTICATE failed" in err_msg or "Logon failure" in err_msg:
+            if is_microsoft_account(username, host):
+                raise RuntimeError(
+                    f"Error de autenticación IMAP en Microsoft para '{username}': {err_msg}\n"
+                    "Causa: Desde septiembre de 2024, Microsoft desactivó definitivamente la autenticación básica "
+                    "(usuario/contraseña y contraseñas de aplicación) para cuentas personales (@hotmail.com, @outlook.com, @live.com).\n"
+                    "Solución: Debe utilizarse autenticación OAuth 2.0 (XOAUTH2) asignando 'oauth_token' o 'oauth_refresh_token' "
+                    "a la cuenta. Se ha incluido el helper 'refresh_ms_oauth2_token' en imap.py para generar tokens de forma automática."
+                ) from exc
+        raise
 def fetch_recent(account, limit: int | None = None) -> list[ParsedMessage]:
     """Trae los últimos limit correos de la casilla. Abre y cierra la conexión.
-
     account debe exponer imap_host, imap_port, imap_user, email y una property
-    password ya desencriptada. También puede exponer oauth_token opcional.
+    password ya desencriptada. También puede exponer oauth_token u oauth_refresh_token.
     """
     limit = limit or getattr(settings, "IMAP_FETCH_LIMIT", 10)
     timeout = getattr(settings, "IMAP_TIMEOUT", 30)
     results: list[ParsedMessage] = []
-
     username = get_imap_username(account)
-
-    # Crear contexto SSL por defecto para mejor compatibilidad TLS/SSL con Outlook/Office365
+    raw_host = getattr(account, "imap_host", MICROSOFT_IMAP_HOST)
+    host = normalize_imap_host(raw_host)
+    port = getattr(account, "imap_port", None) or 993
     ssl_context = ssl.create_default_context()
-
     with IMAPClient(
-        host=account.imap_host,
-        port=account.imap_port or 993,
+        host=host,
+        port=port,
         use_uid=True,
         ssl=True,
         ssl_context=ssl_context,
         timeout=timeout,
     ) as server:
-        # Soporte para OAuth2 si la cuenta lo provee (Requerido para cuentas Microsoft modernas)
-        oauth_token = getattr(account, "oauth_token", None)
-        if oauth_token:
-            server.oauth2_login(username, oauth_token)
-        else:
-            server.login(username, account.password)
-
+        _login_server(server, username, getattr(account, "password", ""), account=account, host=host)
         server.select_folder("INBOX", readonly=True)
         uids = server.search(["ALL"])
         if not uids:
             return results
         uids = sorted(uids)[-limit:]
-
-        # Usar BODY.PEEK[] en lugar de RFC822 para no marcar los correos como leídos en Outlook
         response = server.fetch(uids, ["BODY.PEEK[]", "INTERNALDATE"])
         for uid, data in response.items():
-            # IMAPClient puede retornar llaves como bytes o str según la versión
             raw = (
                 data.get(b"BODY.PEEK[]")
                 or data.get("BODY.PEEK[]")
@@ -143,13 +199,11 @@ def fetch_recent(account, limit: int | None = None) -> list[ParsedMessage]:
             )
             if not raw:
                 continue
-
             msg = email.message_from_bytes(raw)
             name, addr = parseaddr(msg.get("From", ""))
             _, to_addr = parseaddr(msg.get("To", ""))
             subject = _decode(msg.get("Subject", ""))
             body_text, body_html = _extract_bodies(msg)
-
             received = data.get(b"INTERNALDATE") or data.get("INTERNALDATE")
             if received is None:
                 try:
@@ -161,10 +215,8 @@ def fetch_recent(account, limit: int | None = None) -> list[ParsedMessage]:
                     received = parsedate_to_datetime(received)
                 except Exception:
                     received = datetime.now(timezone.utc)
-
             if received.tzinfo is None:
                 received = received.replace(tzinfo=timezone.utc)
-
             results.append(
                 ParsedMessage(
                     uid=str(uid),
@@ -180,26 +232,23 @@ def fetch_recent(account, limit: int | None = None) -> list[ParsedMessage]:
                 )
             )
     return results
-
-
 def test_connection(host_or_account, port: int | None = None, user: str | None = None, password: str | None = None) -> None:
     """Valida credenciales IMAP. Acepta (host, port, user, password) o un objeto account."""
     if isinstance(host_or_account, str):
-        host = host_or_account
+        host = normalize_imap_host(host_or_account)
         port = port or 993
         username = user or ""
         pwd = password or ""
-        oauth_token = None
+        account = None
     else:
-        host = host_or_account.imap_host
-        port = host_or_account.imap_port or 993
-        username = get_imap_username(host_or_account)
-        pwd = getattr(host_or_account, "password", "")
-        oauth_token = getattr(host_or_account, "oauth_token", None)
-
+        account = host_or_account
+        raw_host = getattr(account, "imap_host", MICROSOFT_IMAP_HOST)
+        host = normalize_imap_host(raw_host)
+        port = getattr(account, "imap_port", None) or 993
+        username = get_imap_username(account)
+        pwd = getattr(account, "password", "")
     timeout = getattr(settings, "IMAP_TIMEOUT", 30)
     ssl_context = ssl.create_default_context()
-
     with IMAPClient(
         host=host,
         port=port,
@@ -208,8 +257,6 @@ def test_connection(host_or_account, port: int | None = None, user: str | None =
         ssl_context=ssl_context,
         timeout=timeout,
     ) as server:
-        if oauth_token:
-            server.oauth2_login(username, oauth_token)
-        else:
-            server.login(username, pwd)
+        _login_server(server, username, pwd, account=account, host=host)
+        server.select_folder("INBOX", readonly=True)
         server.select_folder("INBOX", readonly=True)
