@@ -5,6 +5,7 @@ from email.utils import parseaddr, parsedate_to_datetime
 from datetime import datetime, timezone
 import json
 import ssl
+import time
 import urllib.parse
 import urllib.request
 from bs4 import BeautifulSoup
@@ -57,6 +58,55 @@ def refresh_ms_oauth2_token(
     with urllib.request.urlopen(req, timeout=15) as resp:
         res_json = json.loads(resp.read().decode("utf-8"))
         return res_json["access_token"]
+def obtain_ms_device_code_token(client_id: str, tenant: str = "common") -> dict[str, str]:
+    """Inicia el flujo de código de dispositivo (Device Code Flow) para autenticar una cuenta
+    de Hotmail / Outlook personal o empresarial de forma interactiva en la terminal.
+    Retorna un diccionario con {"access_token": ..., "refresh_token": ...}.
+    """
+    device_code_url = f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/devicecode"
+    token_url = f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token"
+    payload = {
+        "client_id": client_id,
+        "scope": "https://outlook.office.com/IMAP.AccessAsUser.All offline_access",
+    }
+    data = urllib.parse.urlencode(payload).encode("utf-8")
+    req = urllib.request.Request(device_code_url, data=data, headers={"Content-Type": "application/x-www-form-urlencoded"})
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        code_res = json.loads(resp.read().decode("utf-8"))
+    user_code = code_res["user_code"]
+    verification_uri = code_res.get("verification_uri", "https://microsoft.com/devicelogin")
+    device_code = code_res["device_code"]
+    interval = code_res.get("interval", 5)
+    print(f"\n=======================================================")
+    print(f" AUTENTICACIÓN OAUTH2 MICROSOFT REQUERIDA ")
+    print(f"=======================================================")
+    print(f"1. Abre en tu navegador: {verification_uri}")
+    print(f"2. Ingresa el código:    {user_code}")
+    print(f"=======================================================\n")
+    poll_payload = {
+        "client_id": client_id,
+        "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+        "device_code": device_code,
+    }
+    while True:
+        time.sleep(interval)
+        poll_data = urllib.parse.urlencode(poll_payload).encode("utf-8")
+        poll_req = urllib.request.Request(token_url, data=poll_data, headers={"Content-Type": "application/x-www-form-urlencoded"})
+        try:
+            with urllib.request.urlopen(poll_req, timeout=15) as token_resp:
+                res_json = json.loads(token_resp.read().decode("utf-8"))
+                print("¡Autenticación OAuth2 completada exitosamente!")
+                return res_json
+        except urllib.error.HTTPError as err:
+            err_json = json.loads(err.read().decode("utf-8"))
+            error_code = err_json.get("error")
+            if error_code == "authorization_pending":
+                continue
+            elif error_code == "slow_down":
+                interval += 5
+                continue
+            else:
+                raise RuntimeError(f"Error durante autenticación OAuth2: {err_json.get('error_description')}") from err
 def _decode(value) -> str:
     if not value:
         return ""
@@ -158,8 +208,8 @@ def _login_server(server: IMAPClient, username: str, password: str, account=None
                     f"Error de autenticación IMAP en Microsoft para '{username}': {err_msg}\n"
                     "Causa: Desde septiembre de 2024, Microsoft desactivó definitivamente la autenticación básica "
                     "(usuario/contraseña y contraseñas de aplicación) para cuentas personales (@hotmail.com, @outlook.com, @live.com).\n"
-                    "Solución: Debe utilizarse autenticación OAuth 2.0 (XOAUTH2) asignando 'oauth_token' o 'oauth_refresh_token' "
-                    "a la cuenta. Se ha incluido el helper 'refresh_ms_oauth2_token' en imap.py para generar tokens de forma automática."
+                    "Solución: Debe utilizarse autenticación OAuth 2.0 (XOAUTH2).\n"
+                    "Puedes usar la función 'obtain_ms_device_code_token(client_id)' de imap.py para obtener los tokens de tu cuenta fácilmente."
                 ) from exc
         raise
 def fetch_recent(account, limit: int | None = None) -> list[ParsedMessage]:
@@ -258,5 +308,4 @@ def test_connection(host_or_account, port: int | None = None, user: str | None =
         timeout=timeout,
     ) as server:
         _login_server(server, username, pwd, account=account, host=host)
-        server.select_folder("INBOX", readonly=True)
         server.select_folder("INBOX", readonly=True)
