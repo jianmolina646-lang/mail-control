@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import DOMPurify from "dompurify";
 import { api } from "../lib/api";
 
 export default function MessageView({ id, onClose }) {
@@ -9,6 +10,7 @@ export default function MessageView({ id, onClose }) {
   useEffect(() => {
     setMsg(null);
     setErr("");
+    setTab("html");
     if (id) api.message(id).then(setMsg).catch((e) => setErr(e.message));
   }, [id]);
 
@@ -66,7 +68,11 @@ export default function MessageView({ id, onClose }) {
             {tab === "html" && msg.body_html ? (
               <div
                 className="mail-html-body bg-white text-black rounded-lg p-4 text-sm"
-                dangerouslySetInnerHTML={{ __html: msg.body_html }}
+                dangerouslySetInnerHTML={{
+                  __html: DOMPurify.sanitize(msg.body_html, {
+                    USE_PROFILES: { html: true },
+                  }),
+                }}
               />
             ) : (
               <pre className="whitespace-pre-wrap text-sm text-zinc-300 font-sans">
