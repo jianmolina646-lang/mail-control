@@ -50,11 +50,12 @@ export default function Security() {
   };
 
   return (
-    <div className="h-full overflow-auto p-4 md:p-6 max-w-lg mx-auto">
-      <form onSubmit={submit} className="bg-panel border border-edge rounded-2xl p-6 space-y-4">
+    <div className="mx-auto h-full max-w-xl overflow-auto p-4 md:p-8">
+      <form onSubmit={submit} className="card space-y-4 p-6">
         <div>
-          <h2 className="font-bold text-white flex items-center gap-2">🔐 Seguridad</h2>
-          <p className="text-xs text-zinc-500 mt-0.5">Cambiá la contraseña de acceso al panel.</p>
+          <p className="text-sm font-semibold text-brand-600">Protección de acceso</p>
+          <h2 className="mt-1 text-2xl font-bold text-slate-950 dark:text-white">Seguridad</h2>
+          <p className="mt-1 text-sm text-slate-500">Actualiza la contraseña de acceso al panel.</p>
         </div>
 
         <Field label="Contraseña actual">
@@ -71,7 +72,7 @@ export default function Security() {
                 <div key={i} className={`h-1.5 flex-1 rounded-full ${
                   i <= strength
                     ? strength <= 2 ? "bg-red-500" : strength <= 3 ? "bg-amber-400" : "bg-emerald-500"
-                    : "bg-edge"
+                    : "bg-slate-200 dark:bg-slate-800"
                 }`} />
               ))}
             </div>
@@ -86,7 +87,7 @@ export default function Security() {
         <ul className="space-y-1">
           {checks.map((c) => (
             <li key={c.label} className={`text-xs flex items-center gap-2 ${
-              c.ok ? "text-emerald-400" : "text-zinc-500"
+              c.ok ? "text-emerald-500" : "text-slate-500"
             }`}>
               <span>{c.ok ? "✓" : "○"}</span> {c.label}
             </li>
@@ -98,7 +99,7 @@ export default function Security() {
         )}
 
         <button disabled={!valid || saving}
-          className="w-full bg-accent hover:bg-red-700 disabled:opacity-40 text-white font-semibold rounded-lg py-2.5 text-sm transition">
+          className="btn-primary w-full">
           {saving ? "Guardando…" : "Cambiar contraseña"}
         </button>
       </form>
@@ -106,13 +107,12 @@ export default function Security() {
   );
 }
 
-const inp =
-  "w-full bg-surface border border-edge rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-accent";
+const inp = "input";
 
 function Field({ label, children }) {
   return (
     <label className="block">
-      <span className="text-xs text-zinc-400">{label}</span>
+      <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">{label}</span>
       <div className="mt-1">{children}</div>
     </label>
   );

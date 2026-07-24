@@ -9,26 +9,24 @@ import Inbox from "./pages/Inbox";
 import Alerts from "./pages/Alerts";
 import Accounts from "./pages/Accounts";
 import Security from "./pages/Security";
+import Templates from "./pages/Templates";
 
 function Protected({ children }) {
   const [state, setState] = React.useState("loading");
-
   React.useEffect(() => {
-    api.me()
-      .then(() => setState("authenticated"))
-      .catch(() => setState("anonymous"));
+    api.me().then(() => setState("authenticated")).catch(() => setState("anonymous"));
   }, []);
-
   if (state === "loading") {
     return (
-      <div className="min-h-screen flex items-center justify-center text-zinc-500">
-        Verificando sesión…
+      <div className="app-background flex min-h-screen items-center justify-center bg-slate-50 dark:bg-slate-950">
+        <div className="flex flex-col items-center gap-4 text-sm text-slate-500">
+          <div className="h-10 w-10 animate-spin rounded-full border-4 border-brand-100 border-t-brand-600" />
+          Verificando sesión…
+        </div>
       </div>
     );
   }
-  return state === "authenticated"
-    ? children
-    : <Navigate to="/login" replace />;
+  return state === "authenticated" ? children : <Navigate to="/login" replace />;
 }
 
 ReactDOM.createRoot(document.getElementById("root")).render(
@@ -36,20 +34,15 @@ ReactDOM.createRoot(document.getElementById("root")).render(
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<Login />} />
-        <Route
-          element={
-            <Protected>
-              <Layout />
-            </Protected>
-          }
-        >
+        <Route element={<Protected><Layout /></Protected>}>
           <Route path="/" element={<Inbox />} />
           <Route path="/alertas" element={<Alerts />} />
           <Route path="/cuentas" element={<Accounts />} />
+          <Route path="/plantillas" element={<Templates />} />
           <Route path="/seguridad" element={<Security />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>
-  </React.StrictMode>
+  </React.StrictMode>,
 );

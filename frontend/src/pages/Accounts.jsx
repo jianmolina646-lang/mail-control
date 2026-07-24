@@ -81,9 +81,10 @@ export default function Accounts() {
   };
 
   return (
-    <div className="h-full overflow-auto p-4 md:p-6 max-w-4xl mx-auto space-y-6">
-      <form onSubmit={submit} className="bg-panel border border-edge rounded-2xl p-5 space-y-3">
-        <h2 className="font-bold text-white">Agregar casilla</h2>
+    <div className="mx-auto h-full max-w-6xl space-y-6 overflow-auto p-4 md:p-8">
+      <div><p className="text-sm font-semibold text-brand-600">Integraciones</p><h1 className="mt-1 text-2xl font-bold text-slate-950 dark:text-white">Cuentas de correo</h1><p className="mt-1 text-sm text-slate-500">Conecta y supervisa todas tus bandejas desde un solo lugar.</p></div>
+      <form onSubmit={submit} className="card space-y-4 p-5 md:p-6">
+        <h2 className="font-bold text-slate-900 dark:text-white">Agregar una cuenta</h2>
         <div className="grid sm:grid-cols-2 gap-3">
           <Field label="Email">
             <input required type="email" value={form.email}
@@ -125,21 +126,21 @@ export default function Accounts() {
           <div className={`text-sm ${msg.ok ? "text-emerald-400" : "text-red-400"}`}>{msg.text}</div>
         )}
         <button disabled={saving}
-          className="bg-accent hover:bg-red-700 disabled:opacity-60 text-white font-semibold rounded-lg px-4 py-2 text-sm">
+          className="btn-primary">
           {saving ? "Guardando…" : "Agregar casilla"}
         </button>
       </form>
 
-      <div className="bg-panel border border-edge rounded-2xl overflow-hidden">
-        <div className="p-4 border-b border-edge font-bold text-white">
+      <div className="card overflow-hidden">
+        <div className="border-b border-slate-200/80 p-5 font-bold text-slate-900 dark:border-white/10 dark:text-white">
           Casillas ({accounts.length})
         </div>
-        <div className="divide-y divide-edge/60">
+        <div className="divide-y divide-slate-100 dark:divide-white/5">
           {accounts.map((a) => (
             <div key={a.id} className="p-4 flex flex-wrap items-center gap-3">
               <div className="min-w-0 flex-1">
-                <div className="text-sm text-white truncate">{a.email}</div>
-                <div className="text-xs text-zinc-500">
+                <div className="truncate text-sm font-semibold text-slate-800 dark:text-white">{a.email}</div>
+                <div className="text-xs text-slate-500">
                   {a.imap_host}:{a.imap_port} ·{" "}
                   <StatusBadge status={a.last_status} error={a.last_error} />
                   {a.last_synced_at && (
@@ -158,22 +159,22 @@ export default function Accounts() {
                         setMsg({ ok: false, text: err.message });
                       }
                     }}
-                    className="px-2.5 py-1.5 rounded-lg bg-blue-900/50 text-blue-200 hover:bg-blue-900/70">
+                    className="btn-secondary text-blue-600">
                     {a.oauth_connected ? "Revincular Microsoft" : "Vincular Microsoft"}
                   </button>
                 )}
                 <button onClick={() => act(api.testAccount, a.id, "Conexión OK")}
-                  className="px-2.5 py-1.5 rounded-lg bg-edge hover:bg-edge/70">Probar</button>
+                  className="btn-secondary">Probar</button>
                 <button onClick={() => act(api.syncAccount, a.id, "Escaneo encolado")}
-                  className="px-2.5 py-1.5 rounded-lg bg-edge hover:bg-edge/70">Sincronizar</button>
+                  className="btn-secondary">Sincronizar</button>
                 <button
                   onClick={() => act((id) => api.updateAccount(id, { is_enabled: !a.is_enabled }), a.id, "Actualizado")}
-                  className="px-2.5 py-1.5 rounded-lg bg-edge hover:bg-edge/70">
+                  className="btn-secondary">
                   {a.is_enabled ? "Pausar" : "Activar"}
                 </button>
                 <button
                   onClick={() => confirm(`¿Eliminar ${a.email}?`) && act(api.deleteAccount, a.id, "Eliminada")}
-                  className="px-2.5 py-1.5 rounded-lg bg-red-900/40 text-red-300 hover:bg-red-900/70">
+                  className="btn-secondary text-rose-600 hover:bg-rose-50">
                   Eliminar
                 </button>
               </div>
@@ -188,13 +189,12 @@ export default function Accounts() {
   );
 }
 
-const inp =
-  "w-full bg-surface border border-edge rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-accent";
+const inp = "input";
 
 function Field({ label, children }) {
   return (
     <label className="block">
-      <span className="text-xs text-zinc-400">{label}</span>
+      <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">{label}</span>
       <div className="mt-1">{children}</div>
     </label>
   );
