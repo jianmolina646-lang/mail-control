@@ -12,8 +12,8 @@ from sqlalchemy import delete, select
 from ..core.config import settings
 from ..core.crypto import decrypt
 from ..core.db import SessionLocal
-from ..models.models import Alert, MailAccount, Message
-from ..services import imap_service, radar
+from ..models.models import Alert, MailAccount, Message, Subscription
+from ..services import imap_service, radar, subscription_tracker
 from .celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -169,9 +169,10 @@ def _sync_one_account(account_id: int) -> None:
                 )
                 continue
             
-            is_alert, service, keyword = radar.detect(
+            classification = radar.classify(
                 pm.from_addr, pm.subject, pm.body_text
             )
+            is_alert = classification.is_alert
             msg = Message(
                 account_id=acct.id,
                 uid=pm.uid,
@@ -196,9 +197,20 @@ def _sync_one_account(account_id: int) -> None:
             
             if is_alert:
                 logger.info("🚨 ALERTA DETECTADA en %s: servicio=%s, keyword=%s, asunto=%s", 
-                           acct.email, service, keyword, pm.subject[:100])
-                db.add(Alert(message_id=msg.id, service=service, keyword=keyword))
+                           acct.email, classification.service, classification.reason, pm.subject[:100])
+                db.add(Alert(
+                    message_id=msg.id,
+                    service=classification.service,
+                    keyword=classification.reason,
+                    severity=classification.severity,
+                ))
                 new_alerts += 1
+            subscription_tracker.apply_classification(
+                db,
+                account_id=acct.id,
+                message=msg,
+                result=classification,
+            )
 
         acct.last_status = "ok"
         acct.last_error = ""
@@ -227,5 +239,50 @@ def cleanup_old_messages(days: int = 30) -> int:
         )
         db.commit()
         return result.rowcount or 0
+    finally:
+        db.close()
+
+
+@celery_app.task(name="app.workers.tasks.rebuild_subscription_states")
+def rebuild_subscription_states() -> int:
+    """Reclasifica el historial completo usando las reglas actuales."""
+    db = SessionLocal()
+    try:
+        db.execute(delete(Alert))
+        db.execute(delete(Subscription))
+        messages = db.scalars(
+            select(Message).order_by(Message.received_at.asc(), Message.id.asc())
+        ).all()
+        detected = 0
+        for message in messages:
+            result = radar.classify(
+                message.from_addr,
+                message.subject,
+                message.body_text,
+            )
+            message.is_alert = result.is_alert
+            if result.is_alert:
+                db.add(
+                    Alert(
+                        message_id=message.id,
+                        service=result.service,
+                        keyword=result.reason,
+                        severity=result.severity,
+                    )
+                )
+            if result.status != "unknown":
+                subscription_tracker.apply_classification(
+                    db,
+                    account_id=message.account_id,
+                    message=message,
+                    result=result,
+                )
+                detected += 1
+        db.commit()
+        logger.info("Radar reconstruido: %s mensajes con estado", detected)
+        return detected
+    except Exception:
+        db.rollback()
+        raise
     finally:
         db.close()

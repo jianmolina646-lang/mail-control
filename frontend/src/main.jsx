@@ -10,6 +10,7 @@ import Alerts from "./pages/Alerts";
 import Accounts from "./pages/Accounts";
 import Security from "./pages/Security";
 import Templates from "./pages/Templates";
+import Subscriptions from "./pages/Subscriptions";
 
 function Protected({ children }) {
   const [state, setState] = React.useState("loading");
@@ -37,6 +38,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(
         <Route element={<Protected><Layout /></Protected>}>
           <Route path="/" element={<Inbox />} />
           <Route path="/alertas" element={<Alerts />} />
+          <Route path="/suscripciones" element={<Subscriptions />} />
           <Route path="/cuentas" element={<Accounts />} />
           <Route path="/plantillas" element={<Templates />} />
           <Route path="/seguridad" element={<Security />} />

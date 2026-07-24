@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
-  Bell, ChevronLeft, ChevronRight, Inbox, KeyRound, LayoutGrid, LogOut,
+  Bell, ChevronLeft, ChevronRight, CreditCard, Inbox, KeyRound, LayoutGrid, LogOut,
   Mail, Menu, Moon, Plus, Radio, Settings, ShieldAlert, Sun, TicketCheck,
   UsersRound, X,
 } from "lucide-react";
@@ -9,6 +9,7 @@ import { api } from "../lib/api";
 
 const links = [
   { to: "/", label: "Bandeja de entrada", icon: Inbox, end: true },
+  { to: "/suscripciones", label: "Suscripciones", icon: CreditCard },
   { to: "/alertas", label: "Alertas críticas", icon: ShieldAlert, badge: true },
   { to: "/cuentas", label: "Cuentas", icon: UsersRound },
   { to: "/plantillas", label: "Plantillas de ventas", icon: LayoutGrid },
@@ -18,6 +19,7 @@ const links = [
 const titles = {
   "/": ["Bandeja de entrada", "Gestiona todos tus correos desde un solo lugar"],
   "/alertas": ["Alertas críticas", "Prioriza incidencias que requieren atención"],
+  "/suscripciones": ["Suscripciones", "Estado consolidado de pagos y servicios"],
   "/cuentas": ["Cuentas vinculadas", "Administra tus proveedores de correo"],
   "/plantillas": ["Plantillas", "Responde más rápido con contenido reutilizable"],
   "/seguridad": ["Configuración", "Seguridad y preferencias del panel"],

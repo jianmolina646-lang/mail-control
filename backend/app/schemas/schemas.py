@@ -114,3 +114,43 @@ class StatsOut(BaseModel):
     accounts_error: int
     messages_total: int
     alerts_open: int
+
+
+# --- Suscripciones ---
+class SubscriptionEventOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    message_id: int | None
+    previous_status: str
+    status: str
+    severity: str
+    reason: str
+    score: int
+    detected_at: datetime
+
+
+class SubscriptionOut(BaseModel):
+    id: int
+    account_id: int
+    account_email: EmailStr
+    service: str
+    status: str
+    severity: str
+    reason: str
+    score: int
+    latest_message_id: int | None
+    detected_at: datetime
+    updated_at: datetime
+
+
+class SubscriptionDetail(SubscriptionOut):
+    events: list[SubscriptionEventOut]
+
+
+class SubscriptionStatsOut(BaseModel):
+    total: int
+    active: int
+    warning: int
+    payment_failed: int
+    suspended: int
+    cancelled: int

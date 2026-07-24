@@ -55,4 +55,11 @@ export const api = {
 
   alerts: (params) => request(`/alerts?${new URLSearchParams(params)}`),
   resolveAlert: (id) => request(`/alerts/${id}/resolve`, { method: "POST" }),
+
+  subscriptions: (params = {}) =>
+    request(`/subscriptions?${new URLSearchParams(params)}`),
+  subscription: (id) => request(`/subscriptions/${id}`),
+  subscriptionStats: () => request("/subscriptions/stats"),
+  rebuildSubscriptions: () =>
+    request("/subscriptions/rebuild", { method: "POST" }),
 };

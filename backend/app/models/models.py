@@ -60,6 +60,9 @@ class MailAccount(Base):
     messages: Mapped[list["Message"]] = relationship(
         back_populates="account", cascade="all, delete-orphan"
     )
+    subscriptions: Mapped[list["Subscription"]] = relationship(
+        back_populates="account", cascade="all, delete-orphan"
+    )
 
     @property
     def oauth_connected(self) -> bool:
@@ -119,3 +122,66 @@ class Alert(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
 
     message: Mapped["Message"] = relationship(back_populates="alert")
+
+
+class Subscription(Base):
+    """Último estado conocido de un servicio para una cuenta de correo."""
+
+    __tablename__ = "subscriptions"
+    __table_args__ = (
+        UniqueConstraint("account_id", "service", name="uq_subscription_account_service"),
+        Index("ix_subscription_status_updated", "status", "updated_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    account_id: Mapped[int] = mapped_column(
+        ForeignKey("mail_accounts.id", ondelete="CASCADE"), index=True
+    )
+    service: Mapped[str] = mapped_column(String(80), index=True)
+    status: Mapped[str] = mapped_column(String(30), default="unknown", index=True)
+    severity: Mapped[str] = mapped_column(String(20), default="info")
+    reason: Mapped[str] = mapped_column(String(255), default="")
+    score: Mapped[int] = mapped_column(Integer, default=0)
+    latest_message_id: Mapped[int | None] = mapped_column(
+        ForeignKey("messages.id", ondelete="SET NULL"), nullable=True
+    )
+    detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now
+    )
+
+    account: Mapped["MailAccount"] = relationship(back_populates="subscriptions")
+    latest_message: Mapped["Message | None"] = relationship(
+        foreign_keys=[latest_message_id]
+    )
+    events: Mapped[list["SubscriptionEvent"]] = relationship(
+        back_populates="subscription",
+        cascade="all, delete-orphan",
+        order_by="SubscriptionEvent.detected_at.desc()",
+    )
+
+
+class SubscriptionEvent(Base):
+    """Historial inmutable de cambios de estado de una suscripción."""
+
+    __tablename__ = "subscription_events"
+    __table_args__ = (
+        Index("ix_subscription_event_timeline", "subscription_id", "detected_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    subscription_id: Mapped[int] = mapped_column(
+        ForeignKey("subscriptions.id", ondelete="CASCADE"), index=True
+    )
+    message_id: Mapped[int | None] = mapped_column(
+        ForeignKey("messages.id", ondelete="SET NULL"), nullable=True
+    )
+    previous_status: Mapped[str] = mapped_column(String(30), default="unknown")
+    status: Mapped[str] = mapped_column(String(30))
+    severity: Mapped[str] = mapped_column(String(20), default="info")
+    reason: Mapped[str] = mapped_column(String(255), default="")
+    score: Mapped[int] = mapped_column(Integer, default=0)
+    detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    subscription: Mapped["Subscription"] = relationship(back_populates="events")
+    message: Mapped["Message | None"] = relationship(foreign_keys=[message_id])

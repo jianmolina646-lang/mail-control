@@ -20,7 +20,7 @@ from ..core.security import (
     hash_password,
     verify_password,
 )
-from ..models.models import Alert, MailAccount, Message, User
+from ..models.models import Alert, MailAccount, Message, Subscription, User
 from ..schemas.schemas import (
     AlertOut,
     ChangePasswordIn,
@@ -31,6 +31,9 @@ from ..schemas.schemas import (
     PaginatedAlerts,
     PaginatedMessages,
     StatsOut,
+    SubscriptionDetail,
+    SubscriptionOut,
+    SubscriptionStatsOut,
     UserOut,
 )
 from ..services import imap_service, microsoft_auth
@@ -401,6 +404,91 @@ def resolve_alert(
     alert.resolved = True
     db.commit()
     return {"ok": True}
+
+
+# --- Estado consolidado de suscripciones ---
+def _subscription_out(item: Subscription) -> dict:
+    return {
+        "id": item.id,
+        "account_id": item.account_id,
+        "account_email": item.account.email,
+        "service": item.service,
+        "status": item.status,
+        "severity": item.severity,
+        "reason": item.reason,
+        "score": item.score,
+        "latest_message_id": item.latest_message_id,
+        "detected_at": item.detected_at,
+        "updated_at": item.updated_at,
+    }
+
+
+@router.get("/subscriptions", response_model=list[SubscriptionOut])
+def list_subscriptions(
+    account_id: int | None = None,
+    status: str | None = None,
+    service: str | None = None,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    query = db.query(Subscription).options(joinedload(Subscription.account))
+    if account_id:
+        query = query.filter(Subscription.account_id == account_id)
+    if status:
+        query = query.filter(Subscription.status == status)
+    if service:
+        query = query.filter(Subscription.service == service)
+    return [
+        _subscription_out(item)
+        for item in query.order_by(Subscription.updated_at.desc()).all()
+    ]
+
+
+@router.get("/subscriptions/stats", response_model=SubscriptionStatsOut)
+def subscription_stats(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    counts = dict(
+        db.query(Subscription.status, func.count(Subscription.id))
+        .group_by(Subscription.status)
+        .all()
+    )
+    return SubscriptionStatsOut(
+        total=sum(counts.values()),
+        active=counts.get("active", 0),
+        warning=counts.get("warning", 0),
+        payment_failed=counts.get("payment_failed", 0),
+        suspended=counts.get("suspended", 0),
+        cancelled=counts.get("cancelled", 0),
+    )
+
+
+@router.get("/subscriptions/{subscription_id}", response_model=SubscriptionDetail)
+def get_subscription(
+    subscription_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    item = (
+        db.query(Subscription)
+        .options(joinedload(Subscription.account), joinedload(Subscription.events))
+        .filter(Subscription.id == subscription_id)
+        .one_or_none()
+    )
+    if not item:
+        raise HTTPException(status_code=404, detail="Suscripción no encontrada")
+    return {**_subscription_out(item), "events": item.events}
+
+
+@router.post("/subscriptions/rebuild")
+def rebuild_subscriptions(
+    user: User = Depends(get_current_user),
+):
+    from ..workers.tasks import rebuild_subscription_states
+
+    task = rebuild_subscription_states.delay()
+    return {"queued": True, "task_id": task.id}
 
 
 # --- Stats del dashboard ---

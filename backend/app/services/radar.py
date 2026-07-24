@@ -1,153 +1,158 @@
-"""Radar de suscripciones: detecta alertas de caída/pago en correos de streaming.
+"""Clasificador determinista de estados de suscripciones.
 
-Regla de exclusión estricta: NO extraemos códigos OTP ni PINs. Solo
-clasificamos el correo como alerta crítica si viene de un dominio de streaming
-y contiene una palabra clave de problema de suscripción.
+No extrae OTP, PIN, enlaces ni credenciales. Solo clasifica mensajes enviados
+desde dominios conocidos y utiliza frases contextualizadas para evitar que una
+palabra genérica como ``payment`` produzca una alerta falsa.
 """
 
 from __future__ import annotations
 
-# Dominios de servicios de streaming (se hace match por "contiene").
-STREAMING_DOMAINS: dict[str, str] = {
-    # Plataformas principales
-    "netflix": "Netflix",
-    "hbomax": "HBO Max",
-    "max.com": "Max",
-    "primevideo": "Prime Video",
-    "amazon": "Prime Video",
-    "disney": "Disney+",
-    "disneyplus": "Disney+",
-    "spotify": "Spotify",
-    "hulu": "Hulu",
-    "paramount": "Paramount+",
-    "crunchyroll": "Crunchyroll",
-    "youtube": "YouTube Premium",
-    "youtubemusic": "YouTube Music",
-    "star": "Star+",
-    "vix": "ViX",
-    "appletv": "Apple TV+",
-    "apple.com": "Apple TV+",
-    # Regionales y adicionales
-    "disneystars": "Disney Star",
-    "peacock": "Peacock",
-    "mubi": "MUBI",
-    "criterion": "Criterion",
-    "showtime": "Showtime",
-    "acorntvplus": "Acorn TV",
-    "britbox": "BritBox",
-    "kanopy": "Kanopy",
-    "hooplala": "Hoopla",
-    "pluto": "Pluto TV",
-    "tubi": "Tubi",
-    "freevee": "FreeVee",
-    "cinemax": "Cinemax",
-    "starz": "Starz",
-    "sundancenow": "Sundance Now",
-    "tcm": "TCM",
-    "turner": "Turner",
-    "twitch": "Twitch",
-    "kick": "Kick",
-    "bilibili": "BiliBili",
-    "iqiyi": "iQIYI",
-    "mydramalist": "MyDramaList",
-    "wetv": "WeTV",
-    "aha": "Aha",
-    "hotstar": "Disney Hotstar",
-    "zee5": "ZEE5",
-    "sonyliv": "SonyLIV",
-    "voot": "Voot",
-    "alibaba": "Alibaba",
-    "vudu": "Vudu",
-    "redbox": "Redbox",
-    "fubo": "Fubo",
-    "sling": "Sling",
-    "philo": "Philo",
-    # Música y podcasts
-    "applemusic": "Apple Music",
-    "musicapple": "Apple Music",
-    "tidal": "TIDAL",
-    "soundcloud": "SoundCloud",
-    "deezer": "Deezer",
-    # Otros servicios
-    "audible": "Audible",
-    "skillshare": "Skillshare",
-    "masterclass": "MasterClass",
-    "udemy": "Udemy",
-    "coursera": "Coursera",
+import re
+from dataclasses import dataclass
+from email.utils import parseaddr
+
+
+@dataclass(frozen=True)
+class Classification:
+    service: str = ""
+    status: str = "unknown"
+    severity: str = "info"
+    reason: str = ""
+    score: int = 0
+
+    @property
+    def is_alert(self) -> bool:
+        return self.status in {"warning", "payment_failed", "suspended", "cancelled"}
+
+
+# Un dominio coincide solo si es exacto o un subdominio. Nunca por texto libre.
+SERVICE_DOMAINS: dict[str, tuple[str, ...]] = {
+    "Netflix": ("netflix.com",),
+    "Prime Video": ("amazon.com", "amazon.es", "amazon.com.mx", "primevideo.com"),
+    "Disney+": ("disneyplus.com", "disney.com"),
+    "Max": ("max.com", "hbomax.com"),
+    "Spotify": ("spotify.com",),
+    "Paramount+": ("paramountplus.com", "paramount.com"),
+    "YouTube Premium": ("youtube.com", "google.com"),
+    "Apple TV+": ("apple.com",),
+    "Crunchyroll": ("crunchyroll.com",),
+    "Hulu": ("hulu.com",),
+    "ViX": ("vix.com",),
 }
 
-# Palabras clave de problema (multi-idioma). NO incluye códigos/OTP.
-ALERT_KEYWORDS: list[str] = [
-    # ESPAÑOL - Pagos/Problemas
-    "pago", "actualizar", "actualiza", "rechazado", "rechazada",
-    "caducada", "caducado", "cancelada", "cancelado", "vencida", "vencido",
-    "suspendida", "suspendido", "problema con el pago", "método de pago",
-    "no pudimos", "fallo", "falló", "renovar", "renovación",
-    "tarjeta rechazada", "pago no completado", "cuenta suspendida",
-    "acceso denegado", "no autorizado", "verificación fallida",
-    "límite de intentos", "cuenta bloqueada", "inactiva",
-    
-    # ESPAÑOL - Estado/Cambios
-    "activo", "activada", "activación", "confirmado", "confirmada",
-    "renovada", "renovado", "vigente", "suscrito", "suscrita",
-    "confirmación", "verificado", "validado", "habilitado",
-    
-    # INGLÉS - Pagos/Problemas
-    "payment", "update", "declined", "expired", "cancelled", "canceled",
-    "suspended", "hold", "failed", "renew", "billing",
-    "card declined", "payment failed", "account suspended",
-    "access denied", "unauthorized", "verification failed",
-    "attempt limit", "account locked", "inactive",
-    
-    # INGLÉS - Estado/Cambios
-    "active", "activated", "activation", "confirmed", "confirmation",
-    "renewed", "valid", "subscribed", "verified", "enabled",
-    
-    # PORTUGUÉS - Pagos/Problemas
-    "pagamento", "atualizar", "recusado", "expirada", "cancelada",
-    "suspensa", "falha", "falhou", "renovar", "renovação",
-    "cartão recusado", "pagamento não efetuado", "conta suspensa",
-    "acesso negado", "não autorizado", "verificação falhou",
-    
-    # PORTUGUÉS - Estado/Cambios
-    "ativo", "ativada", "ativação", "confirmado", "confirmada",
-    "renovada", "renovado", "vigente", "inscrito", "inscrita",
-    
-    # ITALIANO - Pagos/Problemas
-    "pagamento", "aggiornare", "rifiutato", "scaduta", "cancellata",
-    "sospesa", "errore", "fallito", "rinnovare", "rinnovo",
-    "carta rifiutata", "pagamento non riuscito", "account sospeso",
-    
-    # ITALIANO - Estado/Cambios
-    "attivo", "attivata", "attivazione", "confermato", "confermata",
-    "rinnovata", "rinnovato", "valido", "iscritto", "iscritta",
-    
-    # PALABRAS CLAVE DE URGENCIA (Cualquier idioma)
-    "urgente", "urgent", "importante", "important", "aviso", "notice",
-    "alert", "alerta", "crítico", "critical", "critical",
-    "atención", "attention", "requiere", "requires", "acción",
-    "action", "inmediato", "immediate", "pronto", "soon",
-]
+# Se evalúan primero los estados más graves. Una coincidencia en el asunto pesa
+# más que una en el cuerpo.
+STATUS_RULES: dict[str, tuple[int, str, tuple[str, ...]]] = {
+    "suspended": (
+        5, "Cuenta suspendida",
+        (
+            "account suspended", "membership suspended", "cuenta suspendida",
+            "suscripción suspendida", "suscripcion suspendida", "acceso suspendido",
+            "account locked due to billing", "conta suspensa",
+        ),
+    ),
+    "payment_failed": (
+        5, "Pago rechazado",
+        (
+            "payment failed", "payment was declined", "card declined",
+            "unable to process your payment", "couldn't process your payment",
+            "could not process your payment", "pago rechazado", "pago fallido",
+            "no pudimos procesar tu pago", "no se pudo procesar el pago",
+            "tarjeta rechazada", "pagamento recusado", "pagamento falhou",
+        ),
+    ),
+    "cancelled": (
+        5, "Suscripción cancelada",
+        (
+            "subscription cancelled", "subscription canceled", "membership cancelled",
+            "membership canceled", "suscripción cancelada", "suscripcion cancelada",
+            "membresía cancelada", "membresia cancelada",
+        ),
+    ),
+    "warning": (
+        3, "Requiere actualización",
+        (
+            "update payment method", "update your payment", "payment method expires",
+            "card is expiring", "action required: payment", "billing information",
+            "actualiza tu método de pago", "actualizar método de pago",
+            "actualiza tu metodo de pago", "tarjeta está por vencer",
+            "tarjeta esta por vencer", "atualize sua forma de pagamento",
+        ),
+    ),
+    "active": (
+        3, "Suscripción activa",
+        (
+            "payment successful", "payment received", "membership reactivated",
+            "subscription renewed", "renewal confirmed", "membership is active",
+            "pago realizado", "pago aprobado", "pago recibido",
+            "suscripción renovada", "suscripcion renovada", "membresía reactivada",
+            "membresia reactivada", "renovación confirmada", "renovacion confirmada",
+        ),
+    ),
+}
+
+NEGATIVE_CONTEXT = (
+    "welcome", "bienvenido", "verify your email", "verifica tu correo",
+    "new sign-in", "nuevo inicio de sesión", "nuevo inicio de sesion",
+)
+
+SERVICE_CONTEXT: dict[str, tuple[str, ...]] = {
+    "Prime Video": ("prime", "prime video", "membership", "membresía", "membresia"),
+    "YouTube Premium": ("youtube premium", "youtube music"),
+    "Apple TV+": ("apple tv", "apple one"),
+}
+
+
+def _sender_domain(from_addr: str) -> str:
+    address = parseaddr(from_addr or "")[1].lower().strip()
+    if "@" not in address:
+        return ""
+    domain = address.rsplit("@", 1)[1].rstrip(".")
+    return domain if re.fullmatch(r"[a-z0-9.-]+", domain) else ""
+
+
+def _service_for_domain(domain: str) -> str:
+    for service, trusted_domains in SERVICE_DOMAINS.items():
+        if any(domain == trusted or domain.endswith(f".{trusted}") for trusted in trusted_domains):
+            return service
+    return ""
+
+
+def classify(from_addr: str, subject: str, body_text: str) -> Classification:
+    service = _service_for_domain(_sender_domain(from_addr))
+    if not service:
+        return Classification()
+
+    subject_text = (subject or "").casefold()
+    body = (body_text or "").casefold()[:50_000]
+    context = f"{subject_text} {body}"
+    required_context = SERVICE_CONTEXT.get(service)
+    if required_context and not any(term.casefold() in context for term in required_context):
+        return Classification()
+    best = Classification(service=service)
+
+    for status, (base_score, reason, phrases) in STATUS_RULES.items():
+        for phrase in phrases:
+            normalized = phrase.casefold()
+            score = 0
+            if normalized in subject_text:
+                score = base_score + 3
+            elif normalized in body:
+                score = base_score
+            if score and status != "active" and any(term in subject_text for term in NEGATIVE_CONTEXT):
+                score -= 2
+            if score > best.score:
+                severity = (
+                    "critical" if status in {"payment_failed", "suspended", "cancelled"}
+                    else "warning" if status == "warning"
+                    else "info"
+                )
+                best = Classification(service, status, severity, reason, score)
+
+    return best if best.score >= 3 else Classification(service=service)
 
 
 def detect(from_addr: str, subject: str, body_text: str) -> tuple[bool, str, str]:
-    """Devuelve (es_alerta, servicio, keyword).
-
-    Es alerta solo si el remitente es de un dominio de streaming Y aparece
-    alguna keyword de problema en asunto o cuerpo.
-    """
-    sender = (from_addr or "").lower()
-    service = ""
-    for domain, name in STREAMING_DOMAINS.items():
-        if domain in sender:
-            service = name
-            break
-    if not service:
-        return False, "", ""
-
-    haystack = f"{subject or ''} {body_text or ''}".lower()
-    for kw in ALERT_KEYWORDS:
-        if kw in haystack:
-            return True, service, kw
-
-    return False, "", ""
+    """Compatibilidad con llamadas antiguas."""
+    result = classify(from_addr, subject, body_text)
+    return result.is_alert, result.service, result.reason
