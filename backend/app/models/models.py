@@ -71,7 +71,10 @@ class Message(Base):
 
     __tablename__ = "messages"
     __table_args__ = (
-        UniqueConstraint("account_id", "uid", name="uq_message_account_uid"),
+        UniqueConstraint(
+            "account_id", "folder_name", "uid",
+            name="uq_message_account_folder_uid",
+        ),
         Index("ix_message_account_received", "account_id", "received_at"),
         Index("ix_message_received", "received_at"),
     )
@@ -81,6 +84,7 @@ class Message(Base):
         ForeignKey("mail_accounts.id", ondelete="CASCADE"), index=True
     )
     uid: Mapped[str] = mapped_column(String(64))  # UID IMAP (por cuenta)
+    folder_name: Mapped[str] = mapped_column(String(512), default="INBOX")
     message_id: Mapped[str] = mapped_column(String(512), default="")
     from_addr: Mapped[str] = mapped_column(String(512), default="")
     from_name: Mapped[str] = mapped_column(String(255), default="")

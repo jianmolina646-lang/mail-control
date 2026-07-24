@@ -4,7 +4,11 @@ from unittest.mock import Mock, patch
 from cryptography.fernet import Fernet
 
 from app.core import crypto
-from app.services.imap_service import _login_server, normalize_app_password
+from app.services.imap_service import (
+    _login_server,
+    _received_folders,
+    normalize_app_password,
+)
 
 
 class ImapPasswordTests(unittest.TestCase):
@@ -67,6 +71,23 @@ class ImapPasswordTests(unittest.TestCase):
         server.oauth2_login.assert_called_once_with(
             "user@hotmail.com",
             "short-lived-access-token",
+        )
+
+    def test_received_folders_exclude_outgoing_and_deleted_mail(self):
+        server = Mock()
+        server.list_folders.return_value = [
+            ((b"\\Inbox",), b"/", "INBOX"),
+            ((b"\\Junk",), b"/", "Junk"),
+            ((b"\\Archive",), b"/", "Archive"),
+            ((), b"/", "Netflix"),
+            ((b"\\Sent",), b"/", "Sent"),
+            ((b"\\Drafts",), b"/", "Drafts"),
+            ((b"\\Trash",), b"/", "Deleted"),
+        ]
+
+        self.assertEqual(
+            _received_folders(server),
+            ["Junk", "Archive", "Netflix"],
         )
 
 

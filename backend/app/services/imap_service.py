@@ -180,7 +180,7 @@ def _extract_bodies(msg: email.message.Message) -> tuple[str, str]:
     return text[:100_000], html
 class ParsedMessage:
     __slots__ = (
-        "uid", "message_id", "from_addr", "from_name", "to_addr",
+        "uid", "folder_name", "message_id", "from_addr", "from_name", "to_addr",
         "subject", "snippet", "body_text", "body_html", "received_at",
     )
     def __init__(self, **kw):
@@ -261,6 +261,112 @@ def _login_server(server: IMAPClient, username: str, password: str, account=None
                     "• Para Gmail: Usa 'Contraseña de aplicación' desde myaccount.google.com → Seguridad"
                 ) from exc
         raise
+
+
+_EXCLUDED_FOLDER_FLAGS = {
+    "\\noselect", "\\sent", "\\drafts", "\\trash", "\\deleted",
+}
+
+
+def _received_folders(server: IMAPClient) -> list[str]:
+    """Devuelve carpetas que pueden contener correo recibido."""
+    folders: list[str] = []
+    for flags, _delimiter, folder_name in server.list_folders():
+        normalized_flags = {
+            (flag.decode() if isinstance(flag, bytes) else str(flag)).lower()
+            for flag in flags
+        }
+        if normalized_flags & _EXCLUDED_FOLDER_FLAGS:
+            continue
+        name = folder_name.decode() if isinstance(folder_name, bytes) else str(folder_name)
+        if name.upper() != "INBOX":
+            folders.append(name)
+    return folders
+
+
+def _fetch_selected_folder(
+    server: IMAPClient,
+    folder_name: str,
+    limit: int,
+) -> list[ParsedMessage]:
+    """Selecciona y descarga los mensajes recientes de una carpeta."""
+    server.select_folder(folder_name, readonly=True)
+    uids = server.search(["ALL"])
+    logger.info(
+        "Total de correos en carpeta %s: %d",
+        folder_name,
+        len(uids) if uids else 0,
+    )
+    if not uids:
+        return []
+
+    response = server.fetch(
+        sorted(uids)[-limit:],
+        ["BODY.PEEK[]", "INTERNALDATE"],
+    )
+    parsed: list[ParsedMessage] = []
+    for uid, data in response.items():
+        raw = (
+            data.get(b"BODY.PEEK[]")
+            or data.get("BODY.PEEK[]")
+            or data.get(b"RFC822")
+            or data.get("RFC822")
+        )
+        if not raw:
+            continue
+        msg = email.message_from_bytes(raw)
+        name, addr = parseaddr(msg.get("From", ""))
+        _, to_addr = parseaddr(msg.get("To", ""))
+        subject = _decode(msg.get("Subject", ""))
+        body_text, body_html = _extract_bodies(msg)
+        received = data.get(b"INTERNALDATE") or data.get("INTERNALDATE")
+        if received is None:
+            try:
+                received = parsedate_to_datetime(msg.get("Date"))
+            except Exception:
+                received = datetime.now(timezone.utc)
+        elif isinstance(received, str):
+            try:
+                received = parsedate_to_datetime(received)
+            except Exception:
+                received = datetime.now(timezone.utc)
+        if received.tzinfo is None:
+            received = received.replace(tzinfo=timezone.utc)
+        parsed.append(
+            ParsedMessage(
+                uid=str(uid),
+                folder_name=folder_name,
+                message_id=(msg.get("Message-ID") or "")[:512],
+                from_addr=addr[:512],
+                from_name=_decode(name)[:255],
+                to_addr=to_addr[:512],
+                subject=subject[:1000],
+                snippet=(body_text or "").strip().replace("\n", " ")[:300],
+                body_text=body_text,
+                body_html=body_html,
+                received_at=received,
+            )
+        )
+    return parsed
+
+
+def _fetch_other_received_folders(
+    server: IMAPClient,
+    limit: int,
+) -> list[ParsedMessage]:
+    results: list[ParsedMessage] = []
+    for folder_name in _received_folders(server):
+        try:
+            results.extend(_fetch_selected_folder(server, folder_name, limit))
+        except Exception as exc:
+            logger.warning(
+                "No se pudo sincronizar la carpeta %s: %s",
+                folder_name,
+                exc,
+            )
+    return results
+
+
 def fetch_recent(account, limit: int | None = None) -> list[ParsedMessage]:
     """Trae los últimos limit correos de la casilla. Abre y cierra la conexión.
     account debe exponer imap_host, imap_port, imap_user, email y una property
@@ -297,6 +403,7 @@ def fetch_recent(account, limit: int | None = None) -> list[ParsedMessage]:
         
         if not uids:
             logger.info("INBOX vacía para %s", username)
+            results.extend(_fetch_other_received_folders(server, limit))
             return results
         
         # Traer los últimos N correos
@@ -337,6 +444,7 @@ def fetch_recent(account, limit: int | None = None) -> list[ParsedMessage]:
             results.append(
                 ParsedMessage(
                     uid=str(uid),
+                    folder_name="INBOX",
                     message_id=(msg.get("Message-ID") or "")[:512],
                     from_addr=addr[:512],
                     from_name=_decode(name)[:255],
@@ -348,6 +456,8 @@ def fetch_recent(account, limit: int | None = None) -> list[ParsedMessage]:
                     received_at=received,
                 )
             )
+
+        results.extend(_fetch_other_received_folders(server, limit))
     
     logger.info("fetch_recent completado para %s: %d correos parseados", username, len(results))
     return results

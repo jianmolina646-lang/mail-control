@@ -134,9 +134,19 @@ def _sync_one_account(account_id: int) -> None:
             return
 
         existing = {
+            (row[0], row[1])
+            for row in db.execute(
+                select(Message.folder_name, Message.uid)
+                .where(Message.account_id == acct.id)
+            ).all()
+        }
+        existing_message_ids = {
             row[0]
             for row in db.execute(
-                select(Message.uid).where(Message.account_id == acct.id)
+                select(Message.message_id).where(
+                    Message.account_id == acct.id,
+                    Message.message_id != "",
+                )
             ).all()
         }
         logger.debug("%s: %d correos previos en BD", acct.email, len(existing))
@@ -144,8 +154,19 @@ def _sync_one_account(account_id: int) -> None:
         new_messages = 0
         new_alerts = 0
         for pm in parsed:
-            if pm.uid in existing:
-                logger.debug("Mensaje %s ya existe, saltando", pm.uid)
+            message_key = (pm.folder_name, pm.uid)
+            if message_key in existing:
+                logger.debug(
+                    "Mensaje %s/%s ya existe, saltando",
+                    pm.folder_name,
+                    pm.uid,
+                )
+                continue
+            if pm.message_id and pm.message_id in existing_message_ids:
+                logger.debug(
+                    "Message-ID %s ya existe en otra carpeta, saltando",
+                    pm.message_id,
+                )
                 continue
             
             is_alert, service, keyword = radar.detect(
@@ -154,6 +175,7 @@ def _sync_one_account(account_id: int) -> None:
             msg = Message(
                 account_id=acct.id,
                 uid=pm.uid,
+                folder_name=pm.folder_name,
                 message_id=pm.message_id,
                 from_addr=pm.from_addr,
                 from_name=pm.from_name,
@@ -167,6 +189,9 @@ def _sync_one_account(account_id: int) -> None:
             )
             db.add(msg)
             db.flush()
+            existing.add(message_key)
+            if pm.message_id:
+                existing_message_ids.add(pm.message_id)
             new_messages += 1
             
             if is_alert:

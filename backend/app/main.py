@@ -31,6 +31,7 @@ def health():
 def startup() -> None:
     Base.metadata.create_all(bind=engine)
     _ensure_oauth_columns()
+    _ensure_message_folder_columns()
     _ensure_admin()
 
 
@@ -54,6 +55,29 @@ def _ensure_oauth_columns() -> None:
             for statement in statements:
                 connection.execute(text(statement))
         logger.info("Esquema actualizado para Microsoft OAuth2")
+
+
+def _ensure_message_folder_columns() -> None:
+    """Permite guardar UIDs independientes para cada carpeta IMAP."""
+    columns = {
+        item["name"] for item in inspect(engine).get_columns("messages")
+    }
+    if "folder_name" not in columns:
+        with engine.begin() as connection:
+            connection.execute(text(
+                "ALTER TABLE messages ADD COLUMN folder_name VARCHAR(512) "
+                "NOT NULL DEFAULT 'INBOX'"
+            ))
+            connection.execute(text(
+                "ALTER TABLE messages DROP CONSTRAINT IF EXISTS "
+                "uq_message_account_uid"
+            ))
+            connection.execute(text(
+                "ALTER TABLE messages ADD CONSTRAINT "
+                "uq_message_account_folder_uid "
+                "UNIQUE (account_id, folder_name, uid)"
+            ))
+        logger.info("Esquema actualizado para sincronización IMAP multicarpeta")
 
 
 def _ensure_admin() -> None:
