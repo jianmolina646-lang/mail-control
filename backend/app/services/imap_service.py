@@ -279,10 +279,7 @@ def _received_folders(server: IMAPClient) -> list[str]:
         if normalized_flags & _EXCLUDED_FOLDER_FLAGS:
             continue
         name = folder_name.decode() if isinstance(folder_name, bytes) else str(folder_name)
-        # Algunos servidores Outlook exponen "Inbox" y tratan "INBOX" como una
-        # carpeta distinta/vacía, aunque el estándar indique lo contrario.
-        # Conservamos siempre el nombre exacto anunciado por LIST.
-        if name != "INBOX":
+        if name.upper() != "INBOX":
             folders.append(name)
     return folders
 
@@ -312,6 +309,8 @@ def _fetch_selected_folder(
         raw = (
             data.get(b"BODY.PEEK[]")
             or data.get("BODY.PEEK[]")
+            or data.get(b"BODY[]")
+            or data.get("BODY[]")
             or data.get(b"RFC822")
             or data.get("RFC822")
         )
@@ -420,6 +419,8 @@ def fetch_recent(account, limit: int | None = None) -> list[ParsedMessage]:
             raw = (
                 data.get(b"BODY.PEEK[]")
                 or data.get("BODY.PEEK[]")
+                or data.get(b"BODY[]")
+                or data.get("BODY[]")
                 or data.get(b"RFC822")
                 or data.get("RFC822")
             )

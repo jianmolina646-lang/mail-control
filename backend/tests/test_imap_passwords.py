@@ -87,7 +87,7 @@ class ImapPasswordTests(unittest.TestCase):
 
         self.assertEqual(
             _received_folders(server),
-            ["Inbox", "Junk", "Archive", "Netflix"],
+            ["Junk", "Archive", "Netflix"],
         )
 
 
