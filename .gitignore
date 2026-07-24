@@ -6,4 +6,5 @@ node_modules/
 dist/
 deploy/certbot/
 *.log
+backup/data/
 .DS_Store

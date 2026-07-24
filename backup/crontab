@@ -1,0 +1,2 @@
+CRON_TZ=America/Lima
+0 3 * * * root /bin/bash -c '. /etc/mailctl-backup.env; exec /usr/local/bin/mailctl-backup' >> /proc/1/fd/1 2>> /proc/1/fd/2

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { api, setToken } from "../lib/api";
+import { api } from "../lib/api";
 
 export default function Login() {
   const nav = useNavigate();
@@ -14,8 +14,7 @@ export default function Login() {
     setError("");
     setLoading(true);
     try {
-      const { access_token } = await api.login(email, password);
-      setToken(access_token);
+      await api.login(email, password);
       nav("/");
     } catch (err) {
       setError(err.message);

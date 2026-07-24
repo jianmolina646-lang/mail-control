@@ -2,7 +2,7 @@
 
 from datetime import datetime, timedelta, timezone
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Cookie, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -12,7 +12,7 @@ from .config import settings
 from .db import get_db
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
 
 ALGORITHM = "HS256"
 
@@ -34,7 +34,11 @@ def create_access_token(subject: str) -> str:
 
 
 def get_current_user(
-    token: str = Depends(oauth2_scheme),
+    bearer_token: str | None = Depends(oauth2_scheme),
+    session_token: str | None = Cookie(
+        default=None,
+        alias=settings.SESSION_COOKIE_NAME,
+    ),
     db: Session = Depends(get_db),
 ):
     from ..models.models import User
@@ -44,6 +48,9 @@ def get_current_user(
         detail="Sesión inválida o expirada",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    token = session_token or bearer_token
+    if not token:
+        raise credentials_exc
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
         email: str | None = payload.get("sub")

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
-import { api, setToken } from "../lib/api";
+import { api } from "../lib/api";
 
 const links = [
   { to: "/", label: "Bandeja", icon: "📥", end: true },
@@ -20,9 +20,12 @@ export default function Layout() {
     return () => clearInterval(t);
   }, []);
 
-  const logout = () => {
-    setToken("");
-    nav("/login");
+  const logout = async () => {
+    try {
+      await api.logout();
+    } finally {
+      nav("/login");
+    }
   };
 
   return (

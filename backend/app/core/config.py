@@ -11,6 +11,11 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     SECRET_KEY: str = "change-me"  # JWT signing
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 12
+    ALLOWED_ORIGINS: str = "https://panel.ecormecejhelizstore.com"
+    LOGIN_MAX_FAILURES: int = 5
+    LOGIN_BLOCK_SECONDS: int = 15 * 60
+    SESSION_COOKIE_NAME: str = "__Host-mailctl_session"
+    SESSION_COOKIE_SECURE: bool = True
 
     # --- Encriptación de credenciales IMAP (Fernet, base64 de 32 bytes) ---
     CREDENTIALS_ENCRYPTION_KEY: str = ""

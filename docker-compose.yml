@@ -71,6 +71,20 @@ services:
     mem_limit: 128m
     mem_reservation: 64m
 
+  backup:
+    profiles: ["backup"]
+    build: ./backup
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - backup_data:/backups
+      - mega_session:/root/.megaCmd
+    mem_limit: 256m
+    mem_reservation: 64m
+
   frontend:
     build: ./frontend
     restart: unless-stopped
@@ -111,3 +125,5 @@ services:
 
 volumes:
   pgdata:
+  backup_data:
+  mega_session:

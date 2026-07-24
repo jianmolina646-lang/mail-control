@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.responses import RedirectResponse
 from sqlalchemy import func, or_, select
@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session, joinedload
 from ..core import crypto
 from ..core.config import settings
 from ..core.db import get_db
+from ..core.login_limiter import clear_failures, is_blocked, register_failure
 from ..core.security import (
     create_access_token,
     get_current_user,
@@ -30,7 +31,6 @@ from ..schemas.schemas import (
     PaginatedAlerts,
     PaginatedMessages,
     StatsOut,
-    Token,
     UserOut,
 )
 from ..services import imap_service, microsoft_auth
@@ -45,12 +45,55 @@ IMAP_PRESETS = {
 
 
 # --- Auth ---
-@router.post("/auth/login", response_model=Token)
-def login(form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+@router.post("/auth/login")
+def login(
+    request: Request,
+    response: Response,
+    form: OAuth2PasswordRequestForm = Depends(),
+    db: Session = Depends(get_db),
+):
+    ip = (
+        request.headers.get("x-real-ip")
+        or (request.client.host if request.client else None)
+        or "unknown"
+    )
+    if is_blocked(ip, form.username):
+        raise HTTPException(
+            status_code=429,
+            detail="Demasiados intentos. Intenta nuevamente en 15 minutos.",
+        )
     user = db.query(User).filter(User.email == form.username, User.is_active.is_(True)).first()
     if not user or not verify_password(form.password, user.hashed_password):
+        attempts = register_failure(ip, form.username)
+        if attempts >= settings.LOGIN_MAX_FAILURES:
+            raise HTTPException(
+                status_code=429,
+                detail="IP bloqueada durante 15 minutos.",
+            )
         raise HTTPException(status_code=401, detail="Credenciales inválidas")
-    return Token(access_token=create_access_token(user.email))
+    clear_failures(ip, form.username)
+    response.set_cookie(
+        key=settings.SESSION_COOKIE_NAME,
+        value=create_access_token(user.email),
+        max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        httponly=True,
+        secure=settings.SESSION_COOKIE_SECURE,
+        samesite="strict",
+        path="/",
+    )
+    return {"ok": True}
+
+
+@router.post("/auth/logout")
+def logout(response: Response):
+    response.delete_cookie(
+        settings.SESSION_COOKIE_NAME,
+        path="/",
+        secure=settings.SESSION_COOKIE_SECURE,
+        httponly=True,
+        samesite="strict",
+    )
+    return {"ok": True}
 
 
 @router.get("/auth/me", response_model=UserOut)

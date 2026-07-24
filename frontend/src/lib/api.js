@@ -1,17 +1,5 @@
-const TOKEN_KEY = "mailctl_token";
-
-export function getToken() {
-  return localStorage.getItem(TOKEN_KEY) || "";
-}
-export function setToken(t) {
-  if (t) localStorage.setItem(TOKEN_KEY, t);
-  else localStorage.removeItem(TOKEN_KEY);
-}
-
 async function request(path, { method = "GET", body, form } = {}) {
   const headers = {};
-  const token = getToken();
-  if (token) headers["Authorization"] = `Bearer ${token}`;
 
   let payload;
   if (form) {
@@ -22,9 +10,13 @@ async function request(path, { method = "GET", body, form } = {}) {
     headers["Content-Type"] = "application/json";
   }
 
-  const res = await fetch(`/api${path}`, { method, headers, body: payload });
+  const res = await fetch(`/api${path}`, {
+    method,
+    headers,
+    body: payload,
+    credentials: "same-origin",
+  });
   if (res.status === 401) {
-    setToken("");
     if (!location.pathname.includes("/login")) location.href = "/login";
     throw new Error("Sesión expirada");
   }
@@ -43,6 +35,7 @@ async function request(path, { method = "GET", body, form } = {}) {
 export const api = {
   login: (email, password) =>
     request("/auth/login", { method: "POST", form: { username: email, password } }),
+  logout: () => request("/auth/logout", { method: "POST" }),
   me: () => request("/auth/me"),
   changePassword: (current_password, new_password) =>
     request("/change-password", { method: "POST", body: { current_password, new_password } }),

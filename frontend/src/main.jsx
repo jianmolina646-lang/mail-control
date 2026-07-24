@@ -2,7 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import "./index.css";
-import { getToken } from "./lib/api";
+import { api } from "./lib/api";
 import Layout from "./components/Layout";
 import Login from "./pages/Login";
 import Inbox from "./pages/Inbox";
@@ -11,7 +11,24 @@ import Accounts from "./pages/Accounts";
 import Security from "./pages/Security";
 
 function Protected({ children }) {
-  return getToken() ? children : <Navigate to="/login" replace />;
+  const [state, setState] = React.useState("loading");
+
+  React.useEffect(() => {
+    api.me()
+      .then(() => setState("authenticated"))
+      .catch(() => setState("anonymous"));
+  }, []);
+
+  if (state === "loading") {
+    return (
+      <div className="min-h-screen flex items-center justify-center text-zinc-500">
+        Verificando sesión…
+      </div>
+    );
+  }
+  return state === "authenticated"
+    ? children
+    : <Navigate to="/login" replace />;
 }
 
 ReactDOM.createRoot(document.getElementById("root")).render(
