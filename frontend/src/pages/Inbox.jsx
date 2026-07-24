@@ -3,7 +3,7 @@ import { FixedSizeList as List } from "react-window";
 import { api } from "../lib/api";
 import MessageView from "../components/MessageView";
 
-const PAGE_SIZE = 50;
+const PAGE_SIZE = 100;  // Aumentado para traer más correos por página
 const ROW_HEIGHT = 76;
 
 export default function Inbox() {
@@ -13,6 +13,7 @@ export default function Inbox() {
   const [q, setQ] = useState("");
   const [selected, setSelected] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const loadingRef = useRef(false);
 
   const reset = useCallback((query) => {
@@ -39,6 +40,25 @@ export default function Inbox() {
       setLoading(false);
     }
   }, [q]);
+
+  const syncAll = async () => {
+    setSyncing(true);
+    try {
+      const accounts = await api.accounts();
+      // Dispara sincronización para todas las cuentas habilitadas
+      for (const acc of accounts.filter(a => a.is_enabled)) {
+        await api.syncAccount(acc.id);
+      }
+      // Recarga mensajes después de un delay (para dar tiempo a que Celery procese)
+      setTimeout(() => {
+        reset("");
+      }, 2000);
+    } catch (err) {
+      console.error("Error sincronizando:", err);
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   useEffect(() => {
     load(1, "", true);
@@ -94,8 +114,17 @@ export default function Inbox() {
           <button
             onClick={() => reset(q)}
             className="px-3 rounded-lg bg-edge hover:bg-edge/70 text-sm"
+            title="Buscar"
           >
             🔍
+          </button>
+          <button
+            onClick={syncAll}
+            disabled={syncing}
+            className="px-3 rounded-lg bg-edge hover:bg-edge/70 text-sm disabled:opacity-60"
+            title="Sincronizar todas las cuentas"
+          >
+            {syncing ? "⟳" : "↻"}
           </button>
         </div>
         <div className="px-4 py-1.5 text-xs text-zinc-500 border-b border-edge/60">

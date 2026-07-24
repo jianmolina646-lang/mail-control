@@ -77,20 +77,35 @@ def scan_all_accounts() -> int:
     return len(ids)
 
 
-@celery_app.task(name="app.workers.tasks.scan_account_chunk", bind=True, max_retries=2)
+@celery_app.task(name="app.workers.tasks.scan_account_chunk", bind=True, max_retries=3)
 def scan_account_chunk(self, account_ids: list[int]) -> int:
-    """Procesa un lote chico de cuentas EN SERIE (una conexión a la vez)."""
-    processed = 0
-    for account_id in account_ids:
-        with imap_slot(account_id) as ok:
-            if not ok:
-                # Semáforo lleno: reintentar este resto más tarde.
-                logger.warning("Semáforo IMAP lleno; re-encolando cuenta %s", account_id)
-                scan_account_chunk.apply_async(args=[[account_id]], countdown=60)
-                continue
-            _sync_one_account(account_id)
-            processed += 1
-    return processed
+    """Procesa un lote chico de cuentas EN SERIE (una conexión a la vez).
+    
+    Reintentos automáticos hasta 3 veces si hay errores transitorios (timeout, conexión perdida).
+    """
+    try:
+        processed = 0
+        for account_id in account_ids:
+            with imap_slot(account_id) as ok:
+                if not ok:
+                    # Semáforo lleno: reintentar este resto más tarde.
+                    logger.warning("Semáforo IMAP lleno; re-encolando cuenta %s", account_id)
+                    scan_account_chunk.apply_async(args=[[account_id]], countdown=60)
+                    continue
+                _sync_one_account(account_id)
+                processed += 1
+        return processed
+    except Exception as exc:
+        # Reintentar con delay exponencial si hay errores transitorios
+        err_str = str(exc).lower()
+        if any(x in err_str for x in ["timeout", "connection", "temporary", "temporarily", "try again"]):
+            logger.warning("Error transitorio en scan_account_chunk, reintentando... (intento %d/3)", 
+                          self.request.retries + 1)
+            raise self.retry(exc=exc, countdown=30 * (self.request.retries + 1))
+        else:
+            # Errores permanentes no se reintentan
+            logger.error("Error permanente en scan_account_chunk, no se reintenta: %s", exc)
+            raise
 
 
 def _sync_one_account(account_id: int) -> None:
@@ -98,15 +113,19 @@ def _sync_one_account(account_id: int) -> None:
     try:
         acct = db.get(MailAccount, account_id)
         if not acct or not acct.is_enabled:
+            logger.debug("Cuenta %s no encontrada o deshabilitada", account_id)
             return
+        
+        logger.info("Sincronizando cuenta: %s (%s:%d)", acct.email, acct.imap_host, acct.imap_port)
         try:
             parsed = imap_service.fetch_recent(_AccountProxy(acct))
+            logger.info("IMAP fetch_recent: %d correos traídos de %s", len(parsed), acct.email)
         except Exception as exc:
             acct.last_status = "error"
             acct.last_error = str(exc)[:500]
             acct.last_synced_at = datetime.now(timezone.utc)
             db.commit()
-            logger.warning("IMAP error en %s: %s", acct.email, exc)
+            logger.error("IMAP error en %s: %s (tipo: %s)", acct.email, exc, type(exc).__name__, exc_info=True)
             return
 
         existing = {
@@ -115,10 +134,15 @@ def _sync_one_account(account_id: int) -> None:
                 select(Message.uid).where(Message.account_id == acct.id)
             ).all()
         }
+        logger.debug("%s: %d correos previos en BD", acct.email, len(existing))
+        
+        new_messages = 0
         new_alerts = 0
         for pm in parsed:
             if pm.uid in existing:
+                logger.debug("Mensaje %s ya existe, saltando", pm.uid)
                 continue
+            
             is_alert, service, keyword = radar.detect(
                 pm.from_addr, pm.subject, pm.body_text
             )
@@ -138,7 +162,11 @@ def _sync_one_account(account_id: int) -> None:
             )
             db.add(msg)
             db.flush()
+            new_messages += 1
+            
             if is_alert:
+                logger.info("🚨 ALERTA DETECTADA en %s: servicio=%s, keyword=%s, asunto=%s", 
+                           acct.email, service, keyword, pm.subject[:100])
                 db.add(Alert(message_id=msg.id, service=service, keyword=keyword))
                 new_alerts += 1
 
@@ -146,8 +174,11 @@ def _sync_one_account(account_id: int) -> None:
         acct.last_error = ""
         acct.last_synced_at = datetime.now(timezone.utc)
         db.commit()
-        if new_alerts:
-            logger.info("%s: %s alertas nuevas", acct.email, new_alerts)
+        
+        logger.info("✓ Sincronización exitosa de %s: %d nuevos correos, %d alertas", 
+                   acct.email, new_messages, new_alerts)
+    except Exception as exc:
+        logger.critical("Error crítico en _sync_one_account: %s", exc, exc_info=True)
     finally:
         db.close()
 

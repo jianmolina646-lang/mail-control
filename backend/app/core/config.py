@@ -28,12 +28,12 @@ class Settings(BaseSettings):
     IMAP_MAX_CONCURRENCY: int = 50
     # Cuántas cuentas procesa cada tarea de Celery por lote (chunk).
     IMAP_CHUNK_SIZE: int = 10
-    # Correos máximos a traer por cuenta en cada ciclo.
-    IMAP_FETCH_LIMIT: int = 30
-    # Timeout de conexión IMAP en segundos.
-    IMAP_TIMEOUT: int = 20
+    # Correos máximos a traer por cuenta en cada ciclo (AUMENTADO para ver más historia).
+    IMAP_FETCH_LIMIT: int = 100
+    # Timeout de conexión IMAP en segundos (reducido para no bloquear workers).
+    IMAP_TIMEOUT: int = 15
     # Cada cuántos minutos se cicla el escaneo completo de cuentas.
-    SCAN_INTERVAL_MINUTES: int = 10
+    SCAN_INTERVAL_MINUTES: int = 5
 
     class Config:
         env_file = ".env"

@@ -1,5 +1,6 @@
 from __future__ import annotations
 import email
+import logging
 from email.header import decode_header, make_header
 from email.utils import parseaddr, parsedate_to_datetime
 from datetime import datetime, timezone
@@ -12,6 +13,8 @@ from bs4 import BeautifulSoup
 from imapclient import IMAPClient
 from imapclient.exceptions import LoginError
 from ..core.config import settings
+
+logger = logging.getLogger(__name__)
 # Servidor oficial recomendado por Microsoft para IMAP
 MICROSOFT_IMAP_HOST = "outlook.office365.com"
 MICROSOFT_DOMAINS = ("@outlook.", "@hotmail.", "@live.", "@msn.")
@@ -204,12 +207,21 @@ def _login_server(server: IMAPClient, username: str, password: str, account=None
         err_msg = str(exc)
         if "AUTHENTICATE failed" in err_msg or "Logon failure" in err_msg:
             if is_microsoft_account(username, host):
+                # Mensaje de error mejorado con más contexto
                 raise RuntimeError(
-                    f"Error de autenticación IMAP en Microsoft para '{username}': {err_msg}\n"
-                    "Causa: Desde septiembre de 2024, Microsoft desactivó definitivamente la autenticación básica "
-                    "(usuario/contraseña y contraseñas de aplicación) para cuentas personales (@hotmail.com, @outlook.com, @live.com).\n"
-                    "Solución: Debe utilizarse autenticación OAuth 2.0 (XOAUTH2).\n"
-                    "Puedes usar la función 'obtain_ms_device_code_token(client_id)' de imap.py para obtener los tokens de tu cuenta fácilmente."
+                    f"Error de autenticación IMAP en {host} para '{username}'.\n"
+                    f"Detalles: {err_msg[:200]}\n\n"
+                    "Causas posibles:\n"
+                    "1. Contraseña incorrecta o expirada\n"
+                    "2. Microsoft requiere autenticación de dos factores (2FA) activado\n"
+                    "3. Para cuentas personales (@hotmail, @outlook, @live), Microsoft requiere 'Contraseña de Aplicación' específica\n"
+                    "4. La contraseña de aplicación puede haber expirado (máx. 12 meses)\n"
+                    "5. El usuario bloqueó el acceso en configuración de seguridad\n\n"
+                    "Soluciones:\n"
+                    "• Verifica que la contraseña sea correcta\n"
+                    "• Si tiene 2FA, obtén una 'Contraseña de Aplicación' desde account.microsoft.com → Seguridad\n"
+                    "• Asegúrate de permitir aplicaciones menos seguras si corresponde\n"
+                    "• Para Gmail: Usa 'Contraseña de aplicación' desde myaccount.google.com → Seguridad"
                 ) from exc
         raise
 def fetch_recent(account, limit: int | None = None) -> list[ParsedMessage]:
@@ -217,13 +229,17 @@ def fetch_recent(account, limit: int | None = None) -> list[ParsedMessage]:
     account debe exponer imap_host, imap_port, imap_user, email y una property
     password ya desencriptada. También puede exponer oauth_token u oauth_refresh_token.
     """
-    limit = limit or getattr(settings, "IMAP_FETCH_LIMIT", 10)
-    timeout = getattr(settings, "IMAP_TIMEOUT", 30)
+    limit = limit or getattr(settings, "IMAP_FETCH_LIMIT", 100)
+    timeout = getattr(settings, "IMAP_TIMEOUT", 15)
     results: list[ParsedMessage] = []
     username = get_imap_username(account)
     raw_host = getattr(account, "imap_host", MICROSOFT_IMAP_HOST)
     host = normalize_imap_host(raw_host)
     port = getattr(account, "imap_port", None) or 993
+    
+    logger.info("Conectando a %s:%d para %s (usuario: %s, timeout: %ds)", host, port, 
+                getattr(account, "email", "?"), username, timeout)
+    
     ssl_context = ssl.create_default_context()
     with IMAPClient(
         host=host,
@@ -234,12 +250,25 @@ def fetch_recent(account, limit: int | None = None) -> list[ParsedMessage]:
         timeout=timeout,
     ) as server:
         _login_server(server, username, getattr(account, "password", ""), account=account, host=host)
+        logger.debug("Login exitoso en %s para %s", host, username)
+        
         server.select_folder("INBOX", readonly=True)
+        logger.debug("Carpeta INBOX seleccionada (readonly)")
+        
         uids = server.search(["ALL"])
+        logger.info("Total de correos en INBOX: %d", len(uids) if uids else 0)
+        
         if not uids:
+            logger.info("INBOX vacía para %s", username)
             return results
+        
+        # Traer los últimos N correos
         uids = sorted(uids)[-limit:]
+        logger.debug("Trayendo últimos %d correos (UIDs: %s...%s)", len(uids), uids[0] if uids else "?", uids[-1] if uids else "?")
+        
         response = server.fetch(uids, ["BODY.PEEK[]", "INTERNALDATE"])
+        logger.debug("Fetch completado: %d respuestas", len(response) if response else 0)
+        
         for uid, data in response.items():
             raw = (
                 data.get(b"BODY.PEEK[]")
@@ -248,6 +277,7 @@ def fetch_recent(account, limit: int | None = None) -> list[ParsedMessage]:
                 or data.get("RFC822")
             )
             if not raw:
+                logger.debug("No hay contenido para UID %s", uid)
                 continue
             msg = email.message_from_bytes(raw)
             name, addr = parseaddr(msg.get("From", ""))
@@ -281,6 +311,8 @@ def fetch_recent(account, limit: int | None = None) -> list[ParsedMessage]:
                     received_at=received,
                 )
             )
+    
+    logger.info("fetch_recent completado para %s: %d correos parseados", username, len(results))
     return results
 def test_connection(host_or_account, port: int | None = None, user: str | None = None, password: str | None = None) -> None:
     """Valida credenciales IMAP. Acepta (host, port, user, password) o un objeto account."""
@@ -297,7 +329,9 @@ def test_connection(host_or_account, port: int | None = None, user: str | None =
         port = getattr(account, "imap_port", None) or 993
         username = get_imap_username(account)
         pwd = getattr(account, "password", "")
-    timeout = getattr(settings, "IMAP_TIMEOUT", 30)
+    timeout = getattr(settings, "IMAP_TIMEOUT", 15)
+    
+    logger.info("Probando conexión a %s:%d (usuario: %s)", host, port, username)
     ssl_context = ssl.create_default_context()
     with IMAPClient(
         host=host,
@@ -308,4 +342,6 @@ def test_connection(host_or_account, port: int | None = None, user: str | None =
         timeout=timeout,
     ) as server:
         _login_server(server, username, pwd, account=account, host=host)
+        logger.info("✓ Conexión IMAP exitosa a %s:%d para %s", host, port, username)
         server.select_folder("INBOX", readonly=True)
+        logger.debug("Carpeta INBOX accesible")

@@ -41,7 +41,7 @@ export default function Accounts() {
     try {
       await api.createAccount(form);
       setForm(EMPTY);
-      setMsg({ ok: true, text: "Casilla agregada. Se escaneará en el próximo ciclo." });
+      setMsg({ ok: true, text: "✓ Casilla agregada. Se está sincronizando automáticamente…" });
       load();
     } catch (err) {
       setMsg({ ok: false, text: err.message });

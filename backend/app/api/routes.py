@@ -104,6 +104,11 @@ def create_account(
     db.add(acct)
     db.commit()
     db.refresh(acct)
+    
+    # Dispara sincronización automática inmediatamente
+    from ..workers.tasks import scan_account_chunk
+    scan_account_chunk.delay([acct.id])
+    
     return acct
 
 
