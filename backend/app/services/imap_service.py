@@ -279,7 +279,10 @@ def _received_folders(server: IMAPClient) -> list[str]:
         if normalized_flags & _EXCLUDED_FOLDER_FLAGS:
             continue
         name = folder_name.decode() if isinstance(folder_name, bytes) else str(folder_name)
-        if name.upper() != "INBOX":
+        # Algunos servidores Outlook exponen "Inbox" y tratan "INBOX" como una
+        # carpeta distinta/vacía, aunque el estándar indique lo contrario.
+        # Conservamos siempre el nombre exacto anunciado por LIST.
+        if name != "INBOX":
             folders.append(name)
     return folders
 

@@ -76,7 +76,7 @@ class ImapPasswordTests(unittest.TestCase):
     def test_received_folders_exclude_outgoing_and_deleted_mail(self):
         server = Mock()
         server.list_folders.return_value = [
-            ((b"\\Inbox",), b"/", "INBOX"),
+            ((b"\\Inbox",), b"/", "Inbox"),
             ((b"\\Junk",), b"/", "Junk"),
             ((b"\\Archive",), b"/", "Archive"),
             ((), b"/", "Netflix"),
@@ -87,7 +87,7 @@ class ImapPasswordTests(unittest.TestCase):
 
         self.assertEqual(
             _received_folders(server),
-            ["Junk", "Archive", "Netflix"],
+            ["Inbox", "Junk", "Archive", "Netflix"],
         )
 
 
