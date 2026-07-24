@@ -99,7 +99,11 @@ def create_account(
         imap_host=host,
         imap_port=port,
         imap_user=data.imap_user or data.email,
-        encrypted_password=crypto.encrypt(data.password),
+        encrypted_password=crypto.encrypt(
+            imap_service.normalize_app_password(
+                data.password, data.imap_user or data.email, host
+            )
+        ),
     )
     db.add(acct)
     db.commit()
@@ -129,7 +133,11 @@ def update_account(
     if data.imap_user is not None:
         acct.imap_user = data.imap_user
     if data.password:
-        acct.encrypted_password = crypto.encrypt(data.password)
+        acct.encrypted_password = crypto.encrypt(
+            imap_service.normalize_app_password(
+                data.password, acct.imap_user or acct.email, acct.imap_host
+            )
+        )
     if data.is_enabled is not None:
         acct.is_enabled = data.is_enabled
     db.commit()

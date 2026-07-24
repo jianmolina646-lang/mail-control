@@ -89,7 +89,7 @@ export default function Accounts() {
             <input value={form.imap_user} placeholder="por defecto = email"
               onChange={(e) => setField("imap_user", e.target.value)} className={inp} />
           </Field>
-          <Field label="App Password (se guarda encriptada)">
+          <Field label="App Password (puedes pegarla con espacios; se guarda encriptada)">
             <input required type="password" value={form.password}
               onChange={(e) => setField("password", e.target.value)} className={inp} />
           </Field>

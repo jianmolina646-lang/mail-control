@@ -18,6 +18,20 @@ logger = logging.getLogger(__name__)
 # Servidor oficial recomendado por Microsoft para IMAP
 MICROSOFT_IMAP_HOST = "outlook.office365.com"
 MICROSOFT_DOMAINS = ("@outlook.", "@hotmail.", "@live.", "@msn.")
+
+
+def normalize_app_password(password: str, username: str = "", host: str = "") -> str:
+    """Remove visual whitespace from Microsoft App Passwords.
+
+    Microsoft may display or copy these keys in space-separated groups. Those
+    separators are not part of the credential expected by IMAP. Restricting
+    this to Microsoft accounts preserves legitimate spaces for custom servers.
+    """
+    if password and is_microsoft_account(username, host):
+        return "".join(password.split())
+    return password
+
+
 def normalize_imap_host(host: str) -> str:
     """Normaliza el host IMAP. Reemplaza servidores obsoletos de Microsoft por outlook.office365.com."""
     if not host:
@@ -202,7 +216,7 @@ def _login_server(server: IMAPClient, username: str, password: str, account=None
         return
     # 4. Intentar login básico
     try:
-        server.login(username, password)
+        server.login(username, normalize_app_password(password, username, host))
     except (LoginError, Exception) as exc:
         err_msg = str(exc)
         if "AUTHENTICATE failed" in err_msg or "Logon failure" in err_msg:
