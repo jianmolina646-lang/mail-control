@@ -45,8 +45,11 @@ class MailAccount(Base):
     imap_host: Mapped[str] = mapped_column(String(255))
     imap_port: Mapped[int] = mapped_column(Integer, default=993)
     imap_user: Mapped[str] = mapped_column(String(255))
-    # App Password cifrada (Fernet). Nunca en texto plano.
-    encrypted_password: Mapped[str] = mapped_column(Text)
+    # Solo se usa para proveedores legacy/custom; Microsoft usa OAuth2.
+    encrypted_password: Mapped[str] = mapped_column(Text, default="")
+    auth_method: Mapped[str] = mapped_column(String(20), default="password")
+    # Caché MSAL cifrada. Contiene los tokens necesarios para renovación silenciosa.
+    encrypted_oauth_cache: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -57,6 +60,10 @@ class MailAccount(Base):
     messages: Mapped[list["Message"]] = relationship(
         back_populates="account", cascade="all, delete-orphan"
     )
+
+    @property
+    def oauth_connected(self) -> bool:
+        return bool(self.encrypted_oauth_cache)
 
 
 class Message(Base):

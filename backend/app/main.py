@@ -3,6 +3,7 @@
 import logging
 
 from fastapi import FastAPI
+from sqlalchemy import inspect, text
 
 from .api.routes import router
 from .core.config import settings
@@ -29,7 +30,30 @@ def health():
 @app.on_event("startup")
 def startup() -> None:
     Base.metadata.create_all(bind=engine)
+    _ensure_oauth_columns()
     _ensure_admin()
+
+
+def _ensure_oauth_columns() -> None:
+    """Migración compatible con instalaciones existentes sin Alembic."""
+    columns = {
+        item["name"] for item in inspect(engine).get_columns("mail_accounts")
+    }
+    statements = []
+    if "auth_method" not in columns:
+        statements.append(
+            "ALTER TABLE mail_accounts ADD COLUMN auth_method VARCHAR(20) "
+            "NOT NULL DEFAULT 'password'"
+        )
+    if "encrypted_oauth_cache" not in columns:
+        statements.append(
+            "ALTER TABLE mail_accounts ADD COLUMN encrypted_oauth_cache TEXT NULL"
+        )
+    if statements:
+        with engine.begin() as connection:
+            for statement in statements:
+                connection.execute(text(statement))
+        logger.info("Esquema actualizado para Microsoft OAuth2")
 
 
 def _ensure_admin() -> None:

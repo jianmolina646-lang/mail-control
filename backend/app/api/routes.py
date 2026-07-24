@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+from urllib.parse import quote
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.security import OAuth2PasswordRequestForm
+from fastapi.responses import RedirectResponse
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, joinedload
 
 from ..core import crypto
+from ..core.config import settings
 from ..core.db import get_db
 from ..core.security import (
     create_access_token,
@@ -29,7 +33,7 @@ from ..schemas.schemas import (
     Token,
     UserOut,
 )
-from ..services import imap_service
+from ..services import imap_service, microsoft_auth
 
 router = APIRouter(prefix="/api")
 
@@ -93,25 +97,33 @@ def create_account(
     if preset and not host:
         host, port = preset
 
+    is_microsoft = imap_service.is_microsoft_account(
+        data.imap_user or data.email, host
+    )
+    if not is_microsoft and not data.password:
+        raise HTTPException(
+            status_code=422,
+            detail="La contraseña es obligatoria para proveedores personalizados",
+        )
+    encrypted_password = crypto.encrypt(data.password) if data.password and not is_microsoft else ""
+
     acct = MailAccount(
         email=data.email,
         provider=data.provider.lower(),
         imap_host=host,
         imap_port=port,
         imap_user=data.imap_user or data.email,
-        encrypted_password=crypto.encrypt(
-            imap_service.normalize_app_password(
-                data.password, data.imap_user or data.email, host
-            )
-        ),
+        encrypted_password=encrypted_password,
+        auth_method="oauth2" if is_microsoft else "password",
     )
     db.add(acct)
     db.commit()
     db.refresh(acct)
     
     # Dispara sincronización automática inmediatamente
-    from ..workers.tasks import scan_account_chunk
-    scan_account_chunk.delay([acct.id])
+    if not is_microsoft:
+        from ..workers.tasks import scan_account_chunk
+        scan_account_chunk.delay([acct.id])
     
     return acct
 
@@ -132,7 +144,7 @@ def update_account(
         acct.imap_port = data.imap_port
     if data.imap_user is not None:
         acct.imap_user = data.imap_user
-    if data.password:
+    if data.password and acct.auth_method != "oauth2":
         acct.encrypted_password = crypto.encrypt(
             imap_service.normalize_app_password(
                 data.password, acct.imap_user or acct.email, acct.imap_host
@@ -143,6 +155,72 @@ def update_account(
     db.commit()
     db.refresh(acct)
     return acct
+
+
+@router.post("/accounts/{account_id}/microsoft/authorize")
+def authorize_microsoft_account(
+    account_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    acct = db.get(MailAccount, account_id)
+    if not acct:
+        raise HTTPException(status_code=404, detail="Casilla no encontrada")
+    if not imap_service.is_microsoft_account(acct.imap_user, acct.imap_host):
+        raise HTTPException(status_code=400, detail="La casilla no es de Microsoft")
+    try:
+        return {
+            "authorization_url": microsoft_auth.create_authorization_url(
+                acct.id, acct.imap_user or acct.email
+            )
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/microsoft/callback")
+def microsoft_callback(
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+    error_description: str | None = None,
+    db: Session = Depends(get_db),
+):
+    redirect_base = settings.FRONTEND_URL.rstrip("/") + "/cuentas"
+    if error:
+        detail = error_description or error
+        return RedirectResponse(f"{redirect_base}?oauth=error&detail={quote(detail)}")
+    try:
+        if not code or not state:
+            raise ValueError("Microsoft no devolvió code/state")
+        account_id = microsoft_auth.account_id_from_state(state)
+        acct = db.get(MailAccount, account_id)
+        if not acct:
+            raise ValueError("La casilla ya no existe")
+        serialized_cache, authorized_username = (
+            microsoft_auth.redeem_authorization_code(code)
+        )
+        if (
+            authorized_username
+            and authorized_username.casefold() != acct.email.casefold()
+        ):
+            raise ValueError(
+                f"Autorizaste {authorized_username}, pero la casilla es {acct.email}"
+            )
+        acct.encrypted_oauth_cache = crypto.encrypt(serialized_cache)
+        acct.encrypted_password = ""
+        acct.auth_method = "oauth2"
+        acct.last_status = "pending"
+        acct.last_error = ""
+        db.commit()
+        from ..workers.tasks import scan_account_chunk
+        scan_account_chunk.delay([acct.id])
+        return RedirectResponse(f"{redirect_base}?oauth=connected")
+    except Exception as exc:
+        db.rollback()
+        return RedirectResponse(
+            f"{redirect_base}?oauth=error&detail={quote(str(exc))}"
+        )
 
 
 @router.delete("/accounts/{account_id}", status_code=204)
@@ -168,6 +246,12 @@ def test_account(
     if not acct:
         raise HTTPException(status_code=404, detail="Casilla no encontrada")
     try:
+        if imap_service.is_microsoft_account(acct.imap_user, acct.imap_host):
+            if not imap_service.prepare_microsoft_oauth(acct):
+                raise RuntimeError("Primero debes autorizar la cuenta con Microsoft")
+            db.commit()
+            imap_service.test_connection(acct)
+            return {"ok": True}
         imap_service.test_connection(
             acct.imap_host,
             acct.imap_port,

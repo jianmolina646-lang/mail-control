@@ -51,7 +51,8 @@ class _AccountProxy:
         self.imap_host = acct.imap_host
         self.imap_port = acct.imap_port
         self.imap_user = acct.imap_user
-        self.password = decrypt(acct.encrypted_password)
+        self.password = decrypt(acct.encrypted_password) if acct.encrypted_password else ""
+        self.oauth_token = getattr(acct, "oauth_token", None)
 
 
 @celery_app.task(name="app.workers.tasks.scan_all_accounts")
@@ -118,6 +119,10 @@ def _sync_one_account(account_id: int) -> None:
         
         logger.info("Sincronizando cuenta: %s (%s:%d)", acct.email, acct.imap_host, acct.imap_port)
         try:
+            if imap_service.is_microsoft_account(acct.imap_user, acct.imap_host):
+                if not imap_service.prepare_microsoft_oauth(acct):
+                    raise RuntimeError("Cuenta Microsoft pendiente de autorización OAuth2")
+                db.commit()
             parsed = imap_service.fetch_recent(_AccountProxy(acct))
             logger.info("IMAP fetch_recent: %d correos traídos de %s", len(parsed), acct.email)
         except Exception as exc:

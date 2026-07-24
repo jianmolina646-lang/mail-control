@@ -15,6 +15,13 @@ class Settings(BaseSettings):
     # --- Encriptación de credenciales IMAP (Fernet, base64 de 32 bytes) ---
     CREDENTIALS_ENCRYPTION_KEY: str = ""
 
+    # --- Microsoft OAuth2 / Entra ID ---
+    MICROSOFT_CLIENT_ID: str = ""
+    MICROSOFT_TENANT_ID: str = "common"
+    MICROSOFT_CLIENT_SECRET: str = ""
+    MICROSOFT_REDIRECT_URI: str = ""
+    FRONTEND_URL: str = "http://localhost:5173"
+
     # --- DB / Redis ---
     DATABASE_URL: str = "postgresql+psycopg2://mailctl:mailctl@db:5432/mailctl"
     REDIS_URL: str = "redis://redis:6379/0"

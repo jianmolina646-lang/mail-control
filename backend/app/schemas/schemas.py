@@ -35,7 +35,9 @@ class MailAccountIn(BaseModel):
     imap_host: str
     imap_port: int = 993
     imap_user: str | None = None
-    password: str = Field(..., description="App Password; se guarda encriptada")
+    password: str | None = Field(
+        None, description="Solo para proveedores que todavía aceptan contraseña"
+    )
 
 
 class MailAccountUpdate(BaseModel):
@@ -57,6 +59,8 @@ class MailAccountOut(BaseModel):
     last_synced_at: datetime | None
     last_status: str
     last_error: str
+    auth_method: str
+    oauth_connected: bool = False
 
 
 # --- Mensajes ---

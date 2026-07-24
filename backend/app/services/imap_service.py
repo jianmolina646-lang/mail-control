@@ -13,6 +13,8 @@ from bs4 import BeautifulSoup
 from imapclient import IMAPClient
 from imapclient.exceptions import LoginError
 from ..core.config import settings
+from ..core.crypto import decrypt, encrypt
+from . import microsoft_auth
 
 logger = logging.getLogger(__name__)
 # Servidor oficial recomendado por Microsoft para IMAP
@@ -190,6 +192,22 @@ def get_imap_username(account) -> str:
     if "@" not in user and hasattr(account, "email") and "@" in account.email:
         return account.email
     return user
+
+
+def prepare_microsoft_oauth(account) -> bool:
+    """Renueva el token desde la caché MSAL cifrada y lo adjunta a la cuenta."""
+    encrypted_cache = getattr(account, "encrypted_oauth_cache", None)
+    if not encrypted_cache:
+        return False
+    access_token, updated_cache = microsoft_auth.acquire_access_token(
+        decrypt(encrypted_cache),
+        get_imap_username(account),
+    )
+    account.oauth_token = access_token
+    account.encrypted_oauth_cache = encrypt(updated_cache)
+    return True
+
+
 def _login_server(server: IMAPClient, username: str, password: str, account=None, host: str = ""):
     """Realiza el inicio de sesión IMAP soportando OAuth2 y Basic Auth, con diagnóstico de errores de Microsoft."""
     # 1. Token OAuth2 directo en el objeto cuenta
@@ -214,6 +232,11 @@ def _login_server(server: IMAPClient, username: str, password: str, account=None
     if oauth_token:
         server.oauth2_login(username, oauth_token)
         return
+    if is_microsoft_account(username, host):
+        raise RuntimeError(
+            "La cuenta Microsoft no está vinculada con OAuth2. "
+            "Autorízala desde Cuentas."
+        )
     # 4. Intentar login básico
     try:
         server.login(username, normalize_app_password(password, username, host))
