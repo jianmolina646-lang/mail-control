@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { api } from "../lib/api";
 
 const EMPTY = {
   email: "",
   provider: "outlook",
-  imap_host: "",
+  imap_host: "outlook.office365.com",
   imap_port: 993,
   imap_user: "",
   password: "",
@@ -18,13 +19,27 @@ const PRESETS = {
 };
 
 export default function Accounts() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [accounts, setAccounts] = useState([]);
   const [form, setForm] = useState(EMPTY);
   const [msg, setMsg] = useState(null);
   const [saving, setSaving] = useState(false);
 
   const load = () => api.accounts().then(setAccounts);
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    const oauth = searchParams.get("oauth");
+    if (oauth === "connected") {
+      setMsg({ ok: true, text: "Cuenta Microsoft vinculada con OAuth2." });
+      setSearchParams({}, { replace: true });
+    } else if (oauth === "error") {
+      setMsg({
+        ok: false,
+        text: searchParams.get("detail") || "Microsoft rechazó la autorización.",
+      });
+      setSearchParams({}, { replace: true });
+    }
+  }, []);
 
   const setField = (k, v) => {
     setForm((f) => {
@@ -39,7 +54,12 @@ export default function Accounts() {
     setSaving(true);
     setMsg(null);
     try {
-      await api.createAccount(form);
+      const account = await api.createAccount(form);
+      if (["outlook", "hotmail"].includes(form.provider)) {
+        const { authorization_url } = await api.authorizeMicrosoft(account.id);
+        window.location.assign(authorization_url);
+        return;
+      }
       setForm(EMPTY);
       setMsg({ ok: true, text: "✓ Casilla agregada. Se está sincronizando automáticamente…" });
       load();
@@ -89,8 +109,15 @@ export default function Accounts() {
             <input value={form.imap_user} placeholder="por defecto = email"
               onChange={(e) => setField("imap_user", e.target.value)} className={inp} />
           </Field>
-          <Field label="App Password (puedes pegarla con espacios; se guarda encriptada)">
-            <input required type="password" value={form.password}
+          <Field label={
+            ["outlook", "hotmail"].includes(form.provider)
+              ? "Microsoft usa OAuth2 (no necesita contraseña)"
+              : "App Password (se guarda encriptada)"
+          }>
+            <input
+              required={!["outlook", "hotmail"].includes(form.provider)}
+              disabled={["outlook", "hotmail"].includes(form.provider)}
+              type="password" value={form.password}
               onChange={(e) => setField("password", e.target.value)} className={inp} />
           </Field>
         </div>
@@ -121,6 +148,20 @@ export default function Accounts() {
                 </div>
               </div>
               <div className="flex gap-2 text-xs">
+                {["outlook", "hotmail"].includes(a.provider) && (
+                  <button
+                    onClick={async () => {
+                      try {
+                        const { authorization_url } = await api.authorizeMicrosoft(a.id);
+                        window.location.assign(authorization_url);
+                      } catch (err) {
+                        setMsg({ ok: false, text: err.message });
+                      }
+                    }}
+                    className="px-2.5 py-1.5 rounded-lg bg-blue-900/50 text-blue-200 hover:bg-blue-900/70">
+                    {a.oauth_connected ? "Revincular Microsoft" : "Vincular Microsoft"}
+                  </button>
+                )}
                 <button onClick={() => act(api.testAccount, a.id, "Conexión OK")}
                   className="px-2.5 py-1.5 rounded-lg bg-edge hover:bg-edge/70">Probar</button>
                 <button onClick={() => act(api.syncAccount, a.id, "Escaneo encolado")}

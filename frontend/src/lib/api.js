@@ -54,6 +54,8 @@ export const api = {
   deleteAccount: (id) => request(`/accounts/${id}`, { method: "DELETE" }),
   testAccount: (id) => request(`/accounts/${id}/test`, { method: "POST" }),
   syncAccount: (id) => request(`/accounts/${id}/sync`, { method: "POST" }),
+  authorizeMicrosoft: (id) =>
+    request(`/accounts/${id}/microsoft/authorize`, { method: "POST" }),
 
   messages: (params) => request(`/messages?${new URLSearchParams(params)}`),
   message: (id) => request(`/messages/${id}`),
