@@ -43,7 +43,9 @@ if ! mega-whoami >/dev/null 2>&1; then
     mega-login "$MEGA_EMAIL" "$MEGA_PASSWORD"
 fi
 
-mega-mkdir -p "$MEGA_FOLDER"
+if ! mega-ls "$MEGA_FOLDER" >/dev/null 2>&1; then
+    mega-mkdir -p "$MEGA_FOLDER"
+fi
 mega-put "$ARCHIVE" "$MEGA_FOLDER/"
 mega-ls "$MEGA_FOLDER/$(basename "$ARCHIVE")" >/dev/null
 
