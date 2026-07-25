@@ -9,6 +9,8 @@ def test_rejects_sender_that_only_contains_service_name():
     )
     assert result.service == ""
     assert result.status == "unknown"
+    assert result.sender_trusted is False
+    assert "no es oficial" in result.security_warning
 
 
 def test_detects_payment_failure_from_trusted_domain():
@@ -43,6 +45,26 @@ def test_recovery_message_marks_subscription_active():
     assert result.service == "Prime Video"
     assert result.status == "active"
     assert result.is_alert is False
+
+
+def test_recovery_subject_wins_over_old_failure_text_in_body():
+    result = classify(
+        "Netflix <info@netflix.com>",
+        "Payment successful",
+        "Previously your payment failed. Your membership has been reactivated.",
+    )
+    assert result.status == "active"
+    assert result.is_alert is False
+
+
+def test_normal_unknown_sender_is_not_flagged_as_impersonation():
+    result = classify(
+        "Customer <customer@example.com>",
+        "Question about an order",
+        "",
+    )
+    assert result.sender_trusted is True
+    assert result.security_warning == ""
 
 
 def test_regular_amazon_purchase_is_not_prime_subscription():

@@ -98,6 +98,8 @@ class Message(Base):
     body_html: Mapped[str] = mapped_column(Text, default="")
     received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
     is_alert: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    sender_trusted: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    security_warning: Mapped[str] = mapped_column(String(500), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     account: Mapped["MailAccount"] = relationship(back_populates="messages")

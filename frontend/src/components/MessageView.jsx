@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import DOMPurify from "dompurify";
-import { ArrowLeft, Calendar, Mail, MoreHorizontal, Reply, UserRound } from "lucide-react";
+import { ArrowLeft, Calendar, Mail, MoreHorizontal, Reply, ShieldAlert, UserRound } from "lucide-react";
 import { api } from "../lib/api";
 
 export default function MessageView({ id, onClose }) {
@@ -42,6 +42,12 @@ export default function MessageView({ id, onClose }) {
           <button className="btn-secondary px-2.5"><MoreHorizontal size={18} /></button>
         </div>
       </header>
+      {msg && !msg.sender_trusted && (
+        <div className="m-4 flex gap-3 rounded-2xl border border-orange-200 bg-orange-50 p-4 text-orange-800 dark:border-orange-500/20 dark:bg-orange-500/10 dark:text-orange-200">
+          <ShieldAlert className="mt-0.5 shrink-0" size={20} />
+          <div><strong className="block text-sm">Posible suplantación de identidad</strong><p className="mt-1 text-xs leading-5">{msg.security_warning} No abras enlaces ni compartas contraseñas o códigos desde este mensaje.</p></div>
+        </div>
+      )}
       {err && <div className="m-4 rounded-xl bg-rose-50 p-3 text-sm text-rose-600 dark:bg-rose-500/10">{err}</div>}
       {msg && <>
         <div className="flex items-center justify-between border-b border-slate-100 px-5 py-2 dark:border-white/5">

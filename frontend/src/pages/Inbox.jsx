@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FixedSizeList as List } from "react-window";
-import { AlertTriangle, Inbox as InboxIcon, Mail, RefreshCw, Search, UsersRound } from "lucide-react";
+import { AlertTriangle, Inbox as InboxIcon, Mail, RefreshCw, Search, ShieldAlert, UsersRound } from "lucide-react";
 import { useOutletContext } from "react-router-dom";
 import MessageView from "../components/MessageView";
 import { api } from "../lib/api";
@@ -76,12 +76,12 @@ export default function Inbox() {
       <button type="button" style={style} onClick={() => setSelected(message.id)}
         className={`group w-full border-b border-slate-100 px-4 text-left dark:border-white/5 ${active ? "bg-brand-50 dark:bg-brand-500/10" : "hover:bg-slate-50 dark:hover:bg-white/[.03]"}`}>
         <div className="flex h-full items-center gap-3">
-          <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-sm font-bold ${message.is_alert ? "bg-rose-100 text-rose-600 dark:bg-rose-500/15" : "bg-slate-100 text-slate-500 dark:bg-white/5"}`}>
-            {message.is_alert ? <AlertTriangle size={18} /> : initials(message.from_name || message.from_addr)}
+          <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-sm font-bold ${!message.sender_trusted ? "bg-orange-100 text-orange-600 dark:bg-orange-500/15" : message.is_alert ? "bg-rose-100 text-rose-600 dark:bg-rose-500/15" : "bg-slate-100 text-slate-500 dark:bg-white/5"}`}>
+            {!message.sender_trusted ? <ShieldAlert size={18} /> : message.is_alert ? <AlertTriangle size={18} /> : initials(message.from_name || message.from_addr)}
           </span>
           <span className="min-w-0 flex-1">
             <span className="flex items-center gap-2"><strong className="truncate text-sm text-slate-800 dark:text-slate-100">{message.from_name || message.from_addr}</strong><time className="ml-auto shrink-0 text-[11px] text-slate-400">{formatMessageDate(message.received_at)}</time></span>
-            <span className="mt-1 block truncate text-xs font-medium text-slate-600 dark:text-slate-300">{message.subject || "(sin asunto)"}</span>
+            <span className="mt-1 flex items-center gap-2 truncate text-xs font-medium text-slate-600 dark:text-slate-300">{!message.sender_trusted && <em className="not-italic font-bold text-orange-600">Posible suplantación</em>}<span className="truncate">{message.subject || "(sin asunto)"}</span></span>
             <span className="mt-0.5 block truncate text-xs text-slate-400">{message.snippet}</span>
           </span>
         </div>

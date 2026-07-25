@@ -187,6 +187,8 @@ def _sync_one_account(account_id: int) -> None:
                 body_html=pm.body_html,
                 received_at=pm.received_at,
                 is_alert=is_alert,
+                sender_trusted=classification.sender_trusted,
+                security_warning=classification.security_warning,
             )
             db.add(msg)
             db.flush()
@@ -261,6 +263,8 @@ def rebuild_subscription_states() -> int:
                 message.body_text,
             )
             message.is_alert = result.is_alert
+            message.sender_trusted = result.sender_trusted
+            message.security_warning = result.security_warning
             if result.is_alert:
                 db.add(
                     Alert(

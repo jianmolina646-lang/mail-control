@@ -79,6 +79,7 @@ def startup() -> None:
     Base.metadata.create_all(bind=engine)
     _ensure_oauth_columns()
     _ensure_message_folder_columns()
+    _ensure_message_security_columns()
     _ensure_admin()
 
 
@@ -125,6 +126,29 @@ def _ensure_message_folder_columns() -> None:
                 "UNIQUE (account_id, folder_name, uid)"
             ))
         logger.info("Esquema actualizado para sincronización IMAP multicarpeta")
+
+
+def _ensure_message_security_columns() -> None:
+    """Añade indicadores de confianza del remitente a instalaciones existentes."""
+    columns = {
+        item["name"] for item in inspect(engine).get_columns("messages")
+    }
+    statements = []
+    if "sender_trusted" not in columns:
+        statements.append(
+            "ALTER TABLE messages ADD COLUMN sender_trusted BOOLEAN "
+            "NOT NULL DEFAULT TRUE"
+        )
+    if "security_warning" not in columns:
+        statements.append(
+            "ALTER TABLE messages ADD COLUMN security_warning VARCHAR(500) "
+            "NOT NULL DEFAULT ''"
+        )
+    if statements:
+        with engine.begin() as connection:
+            for statement in statements:
+                connection.execute(text(statement))
+        logger.info("Esquema actualizado con protección contra suplantación")
 
 
 def _ensure_admin() -> None:

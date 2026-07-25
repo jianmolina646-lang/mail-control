@@ -74,6 +74,8 @@ class MessageListItem(BaseModel):
     snippet: str
     received_at: datetime
     is_alert: bool
+    sender_trusted: bool
+    security_warning: str
 
 
 class MessageDetail(MessageListItem):

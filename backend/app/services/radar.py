@@ -19,6 +19,8 @@ class Classification:
     severity: str = "info"
     reason: str = ""
     score: int = 0
+    sender_trusted: bool = True
+    security_warning: str = ""
 
     @property
     def is_alert(self) -> bool:
@@ -102,6 +104,20 @@ SERVICE_CONTEXT: dict[str, tuple[str, ...]] = {
     "Apple TV+": ("apple tv", "apple one"),
 }
 
+IMPERSONATION_TERMS: dict[str, tuple[str, ...]] = {
+    "Netflix": ("netflix",),
+    "Prime Video": ("prime video", "primevideo"),
+    "Disney+": ("disney+", "disneyplus"),
+    "Max": ("hbo max", "hbomax"),
+    "Spotify": ("spotify",),
+    "Paramount+": ("paramount+", "paramountplus"),
+    "YouTube Premium": ("youtube premium",),
+    "Apple TV+": ("apple tv+", "apple tv"),
+    "Crunchyroll": ("crunchyroll",),
+    "Hulu": ("hulu",),
+    "ViX": ("vix",),
+}
+
 
 def _sender_domain(from_addr: str) -> str:
     address = parseaddr(from_addr or "")[1].lower().strip()
@@ -119,8 +135,19 @@ def _service_for_domain(domain: str) -> str:
 
 
 def classify(from_addr: str, subject: str, body_text: str) -> Classification:
-    service = _service_for_domain(_sender_domain(from_addr))
+    domain = _sender_domain(from_addr)
+    service = _service_for_domain(domain)
     if not service:
+        sender_identity = (from_addr or "").casefold()
+        for claimed_service, terms in IMPERSONATION_TERMS.items():
+            if any(term in sender_identity for term in terms):
+                return Classification(
+                    sender_trusted=False,
+                    security_warning=(
+                        f"El remitente aparenta ser {claimed_service}, pero el "
+                        f"dominio {domain or 'desconocido'} no es oficial."
+                    ),
+                )
         return Classification()
 
     subject_text = (subject or "").casefold()
