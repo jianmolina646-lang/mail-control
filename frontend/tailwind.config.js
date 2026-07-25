@@ -5,19 +5,17 @@ export default {
   theme: {
     extend: {
       colors: {
-        brand: { 50: "#eef2ff", 100: "#e0e7ff", 200: "#c7d2fe", 500: "#6366f1", 600: "#4f46e5", 700: "#4338ca" },
+        brand: {
+          50: "#f2f5ff",
+          100: "#e6ebff",
+          200: "#cdd7fe",
+          500: "#5368d9",
+          600: "#4054c7",
+          700: "#3443a2",
+        },
       },
       boxShadow: {
-        soft: "0 12px 35px -12px rgba(15,23,42,.16)",
-        glow: "0 12px 35px -12px rgba(79,70,229,.45)",
-      },
-      animation: { "fade-in": "fadeIn .25s ease-out", "slide-up": "slideUp .25s ease-out" },
-      keyframes: {
-        fadeIn: { from: { opacity: "0" }, to: { opacity: "1" } },
-        slideUp: {
-          from: { opacity: "0", transform: "translateY(8px)" },
-          to: { opacity: "1", transform: "translateY(0)" },
-        },
+        panel: "0 1px 2px rgba(15,23,42,.04), 0 4px 16px rgba(15,23,42,.04)",
       },
     },
   },

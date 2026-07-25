@@ -32,6 +32,14 @@ async function request(path, { method = "GET", body, form } = {}) {
   return res.json();
 }
 
+function query(params = {}) {
+  return new URLSearchParams(
+    Object.entries(params).filter(([, value]) =>
+      value !== undefined && value !== null && value !== ""
+    ),
+  ).toString();
+}
+
 export const api = {
   login: (email, password) =>
     request("/auth/login", { method: "POST", form: { username: email, password } }),
@@ -50,14 +58,14 @@ export const api = {
   authorizeMicrosoft: (id) =>
     request(`/accounts/${id}/microsoft/authorize`, { method: "POST" }),
 
-  messages: (params) => request(`/messages?${new URLSearchParams(params)}`),
+  messages: (params) => request(`/messages?${query(params)}`),
   message: (id) => request(`/messages/${id}`),
 
-  alerts: (params) => request(`/alerts?${new URLSearchParams(params)}`),
+  alerts: (params) => request(`/alerts?${query(params)}`),
   resolveAlert: (id) => request(`/alerts/${id}/resolve`, { method: "POST" }),
 
   subscriptions: (params = {}) =>
-    request(`/subscriptions?${new URLSearchParams(params)}`),
+    request(`/subscriptions?${query(params)}`),
   subscription: (id) => request(`/subscriptions/${id}`),
   subscriptionStats: () => request("/subscriptions/stats"),
   rebuildSubscriptions: () =>

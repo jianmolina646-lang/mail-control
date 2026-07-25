@@ -5,6 +5,7 @@ import "./index.css";
 import { api } from "./lib/api";
 import Layout from "./components/Layout";
 import Login from "./pages/Login";
+import Dashboard from "./pages/Dashboard";
 import Inbox from "./pages/Inbox";
 import Alerts from "./pages/Alerts";
 import Accounts from "./pages/Accounts";
@@ -14,19 +15,8 @@ import Subscriptions from "./pages/Subscriptions";
 
 function Protected({ children }) {
   const [state, setState] = React.useState("loading");
-  React.useEffect(() => {
-    api.me().then(() => setState("authenticated")).catch(() => setState("anonymous"));
-  }, []);
-  if (state === "loading") {
-    return (
-      <div className="app-background flex min-h-screen items-center justify-center bg-slate-50 dark:bg-slate-950">
-        <div className="flex flex-col items-center gap-4 text-sm text-slate-500">
-          <div className="h-10 w-10 animate-spin rounded-full border-4 border-brand-100 border-t-brand-600" />
-          Verificando sesión…
-        </div>
-      </div>
-    );
-  }
+  React.useEffect(() => { api.me().then(() => setState("authenticated")).catch(() => setState("anonymous")); }, []);
+  if (state === "loading") return <div className="flex min-h-screen items-center justify-center bg-slate-50 text-sm text-slate-500 dark:bg-slate-950">Verificando sesión…</div>;
   return state === "authenticated" ? children : <Navigate to="/login" replace />;
 }
 
@@ -36,7 +26,8 @@ ReactDOM.createRoot(document.getElementById("root")).render(
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route element={<Protected><Layout /></Protected>}>
-          <Route path="/" element={<Inbox />} />
+          <Route path="/" element={<Dashboard />} />
+          <Route path="/bandeja" element={<Inbox />} />
           <Route path="/alertas" element={<Alerts />} />
           <Route path="/suscripciones" element={<Subscriptions />} />
           <Route path="/cuentas" element={<Accounts />} />
