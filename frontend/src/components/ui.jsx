@@ -1,13 +1,14 @@
 import { AlertCircle, CheckCircle2, Inbox, LoaderCircle } from "lucide-react";
 
-export function PageHeader({ title, description, actions }) {
+export function PageHeader({ eyebrow, title, description, actions }) {
   return (
-    <div className="flex flex-col gap-3 border-b border-slate-200 pb-5 dark:border-slate-800 sm:flex-row sm:items-end">
+    <div className="page-header">
       <div className="min-w-0 flex-1">
-        <h1 className="text-xl font-semibold tracking-tight text-slate-950 dark:text-white">{title}</h1>
-        {description && <p className="mt-1 text-sm text-slate-500">{description}</p>}
+        {eyebrow && <span className="page-eyebrow">{eyebrow}</span>}
+        <h1>{title}</h1>
+        {description && <p>{description}</p>}
       </div>
-      {actions && <div className="flex shrink-0 flex-wrap gap-2">{actions}</div>}
+      {actions && <div className="page-actions">{actions}</div>}
     </div>
   );
 }
