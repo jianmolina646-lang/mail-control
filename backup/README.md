@@ -5,7 +5,10 @@ Respalda PostgreSQL y el `.env` necesario para recuperar las credenciales
 cifradas. Antes de salir del VPS, el paquete se cifra con AES-256-CBC,
 PBKDF2 y 200 000 iteraciones. MEGA recibe únicamente el archivo `.enc`.
 
-Se eliminan automáticamente los archivos con más de `BACKUP_KEEP_DAYS`.
+MEGA organiza las copias en dos niveles:
+
+- `Daily/`: una copia diaria durante 30 días.
+- `Monthly/`: una copia del primer día de cada mes durante 12 meses.
 
 ## Variables
 
@@ -13,7 +16,8 @@ Se eliminan automáticamente los archivos con más de `BACKUP_KEEP_DAYS`.
 MEGA_EMAIL=cuenta-backup@example.com
 MEGA_PASSWORD=REEMPLAZAR
 MEGA_FOLDER=/MailControlBackups
-BACKUP_KEEP_DAYS=7
+BACKUP_DAILY_KEEP_DAYS=30
+BACKUP_MONTHLY_KEEP_MONTHS=12
 BACKUP_ARCHIVE_PASSWORD=UNA_FRASE_LARGA_Y_UNICA
 ```
 
