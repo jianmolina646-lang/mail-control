@@ -20,6 +20,12 @@ class Settings(BaseSettings):
     MAIL_AGENT_API_TOKEN: str = ""
     MAIL_AGENT_CODE_MAX_AGE_SECONDS: int = 600
 
+    # --- Bot privado de Telegram ---
+    TELEGRAM_BOT_TOKEN: str = ""
+    TELEGRAM_ADMIN_CHAT_ID: int = 0
+    TELEGRAM_NOTIFY_ALERTS: bool = True
+    TELEGRAM_NOTIFY_ACCOUNT_ERRORS: bool = True
+
     # --- Encriptación de credenciales IMAP (Fernet, base64 de 32 bytes) ---
     CREDENTIALS_ENCRYPTION_KEY: str = ""
 

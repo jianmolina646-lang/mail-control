@@ -13,7 +13,7 @@ from ..core.config import settings
 from ..core.crypto import decrypt
 from ..core.db import SessionLocal
 from ..models.models import Alert, MailAccount, Message, Subscription
-from ..services import imap_service, radar, subscription_tracker
+from ..services import imap_service, radar, subscription_tracker, telegram_notifier
 from .celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -145,6 +145,11 @@ def _sync_one_account(account_id: int, *, urgent: bool = False) -> None:
             acct.last_error = str(exc)[:500]
             acct.last_synced_at = datetime.now(timezone.utc)
             db.commit()
+            telegram_notifier.notify_account_error(
+                account_id=acct.id,
+                email=acct.email,
+                error=str(exc),
+            )
             logger.error("IMAP error en %s: %s (tipo: %s)", acct.email, exc, type(exc).__name__, exc_info=True)
             return
 
@@ -168,6 +173,7 @@ def _sync_one_account(account_id: int, *, urgent: bool = False) -> None:
         
         new_messages = 0
         new_alerts = 0
+        telegram_alerts: list[dict[str, object]] = []
         for pm in parsed:
             message_key = (pm.folder_name, pm.uid)
             if message_key in existing:
@@ -215,12 +221,22 @@ def _sync_one_account(account_id: int, *, urgent: bool = False) -> None:
             if is_alert:
                 logger.info("🚨 ALERTA DETECTADA en %s: servicio=%s, keyword=%s, asunto=%s", 
                            acct.email, classification.service, classification.reason, pm.subject[:100])
-                db.add(Alert(
+                alert = Alert(
                     message_id=msg.id,
                     service=classification.service,
                     keyword=classification.reason,
                     severity=classification.severity,
-                ))
+                )
+                db.add(alert)
+                db.flush()
+                telegram_alerts.append({
+                    "alert_id": alert.id,
+                    "account_email": acct.email,
+                    "service": classification.service,
+                    "severity": classification.severity,
+                    "reason": classification.reason,
+                    "subject": pm.subject,
+                })
                 new_alerts += 1
             subscription_tracker.apply_classification(
                 db,
@@ -298,6 +314,9 @@ def rebuild_subscription_states() -> int:
                 )
                 detected += 1
         db.commit()
+
+        for telegram_alert in telegram_alerts:
+            telegram_notifier.notify_critical_alert(**telegram_alert)
         logger.info("Radar reconstruido: %s mensajes con estado", detected)
         return detected
     except Exception:

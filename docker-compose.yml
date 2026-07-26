@@ -71,6 +71,20 @@ services:
     mem_limit: 128m
     mem_reservation: 64m
 
+  telegram_bot:
+    profiles: ["telegram"]
+    build: ./backend
+    restart: unless-stopped
+    env_file: .env
+    command: python -m app.telegram_bot
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    mem_limit: 128m
+    mem_reservation: 48m
+
   backup:
     profiles: ["backup"]
     build: ./backup
