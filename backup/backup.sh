@@ -6,6 +6,23 @@ umask 077
 : "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD no configurado}"
 : "${POSTGRES_DB:?POSTGRES_DB no configurado}"
 
+notify_telegram() {
+    local message="$1"
+    local token="${BACKUP_TELEGRAM_BOT_TOKEN:-}"
+    if [[ -n "${BACKUP_TELEGRAM_BOT_TOKEN_FILE:-}" && -s "$BACKUP_TELEGRAM_BOT_TOKEN_FILE" ]]; then
+        token="$(tr -d '\r\n' < "$BACKUP_TELEGRAM_BOT_TOKEN_FILE")"
+    fi
+    if [[ -z "$token" || -z "${BACKUP_TELEGRAM_CHAT_ID:-}" ]]; then
+        return 0
+    fi
+    curl --fail --silent --show-error --max-time 20 \
+        --data-urlencode "chat_id=${BACKUP_TELEGRAM_CHAT_ID}" \
+        --data-urlencode "text=$message" \
+        --data-urlencode "parse_mode=HTML" \
+        "https://api.telegram.org/bot${token}/sendMessage" \
+        >/dev/null 2>&1 || true
+}
+
 MEGA_FOLDER="${MEGA_FOLDER:-/MailControlBackups}"
 DAILY_FOLDER="${MEGA_FOLDER%/}/Daily"
 MONTHLY_FOLDER="${MEGA_FOLDER%/}/Monthly"
@@ -23,10 +40,18 @@ fi
 : "${ARCHIVE_PASSWORD:?BACKUP_ARCHIVE_PASSWORD no configurada}"
 export ARCHIVE_PASSWORD PGPASSWORD="$POSTGRES_PASSWORD"
 
-cleanup() {
+on_exit() {
+    local status=$?
     rm -rf "$WORK_DIR"
+    if (( status != 0 )); then
+        notify_telegram "🔴 <b>BACKUP FALLIDO</b>
+
+Sistema: <b>Mail Control</b>
+Revisa los logs del VPS."
+    fi
+    return "$status"
 }
-trap cleanup EXIT
+trap on_exit EXIT
 
 mkdir -p "$WORK_DIR/payload/config"
 pg_dump \
@@ -107,4 +132,11 @@ done < <(
 )
 
 find /backups -type f -name "mail-control-*.tar.gz*" -mtime +1 -delete
+if [[ "${BACKUP_NOTIFY_SUCCESS:-true}" == "true" ]]; then
+    notify_telegram "✅ <b>BACKUP COMPLETADO</b>
+
+Sistema: <b>Mail Control</b>
+Archivo: <code>$(basename "$ARCHIVE")</code>
+Retención: 30 días + 12 meses."
+fi
 echo "Backup cifrado completado: $(basename "$ARCHIVE")"
