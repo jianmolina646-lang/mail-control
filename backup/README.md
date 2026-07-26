@@ -1,37 +1,24 @@
-# Backups automáticos a MEGA
+# Backups automáticos cifrados a MEGA
 
-El servicio `backup` ejecuta `pg_dump` todos los días a las 03:00
-(`America/Lima`), crea un `tar.gz` con checksum SHA-256, lo sube con MEGAcmd y
-elimina de MEGA los archivos cuyo nombre indique más de `BACKUP_KEEP_DAYS`.
+El servicio `backup` se ejecuta diariamente a las 03:00 (`America/Lima`).
+Respalda PostgreSQL y el `.env` necesario para recuperar las credenciales
+cifradas. Antes de salir del VPS, el paquete se cifra con AES-256-CBC,
+PBKDF2 y 200 000 iteraciones. MEGA recibe únicamente el archivo `.enc`.
 
-## Configuración
+Se eliminan automáticamente los archivos con más de `BACKUP_KEEP_DAYS`.
 
-Configurar en `.env` una cuenta MEGA dedicada:
+## Variables
 
 ```env
 MEGA_EMAIL=cuenta-backup@example.com
-MEGA_PASSWORD=REEMPLAZA_CON_TU_PASSWORD
+MEGA_PASSWORD=REEMPLAZAR
 MEGA_FOLDER=/MailControlBackups
 BACKUP_KEEP_DAYS=7
+BACKUP_ARCHIVE_PASSWORD=UNA_FRASE_LARGA_Y_UNICA
 ```
 
-Proteger el archivo:
-
-```bash
-chmod 600 .env
-```
-
-Más seguro: iniciar sesión una sola vez de forma interactiva (también permite
-resolver 2FA de MEGA), conservar la sesión en el volumen `mega_session` y
-después borrar `MEGA_PASSWORD` del `.env`:
-
-```bash
-docker compose --profile backup run --rm backup mega-login
-nano .env
-```
-
-El script usa `MEGA_EMAIL`/`MEGA_PASSWORD` únicamente si no encuentra una
-sesión persistida.
+Guarda `BACKUP_ARCHIVE_PASSWORD` también en un gestor de contraseñas fuera del
+VPS. Sin esa clave no se puede restaurar el archivo.
 
 ## Activación y prueba
 
@@ -44,15 +31,18 @@ docker compose logs --tail=100 backup
 
 ## Restauración de prueba
 
-Descargar el archivo desde MEGA y ejecutar:
-
 ```bash
-tar -xzf mail-control-YYYYMMDD-HHMMSS.tar.gz
-sha256sum -c database.dump.sha256
+openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 \
+  -in mail-control-YYYYMMDD-HHMMSS.tar.gz.enc \
+  -out mail-control.tar.gz \
+  -pass env:BACKUP_ARCHIVE_PASSWORD
+mkdir restore
+tar -xzf mail-control.tar.gz -C restore
+cd restore
+sha256sum -c SHA256SUMS
 createdb mailctl_restore_test
 pg_restore --no-owner --no-acl --dbname=mailctl_restore_test database.dump
 ```
 
-Una copia no se considera válida hasta completar una restauración de prueba.
-Guardar `CREDENTIALS_ENCRYPTION_KEY` en un gestor de secretos separado: sin esa
-clave no se pueden recuperar las credenciales cifradas del dump.
+Un respaldo solo se considera válido después de completar una restauración de
+prueba.

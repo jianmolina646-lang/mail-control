@@ -10,15 +10,22 @@ MEGA_FOLDER="${MEGA_FOLDER:-/MailControlBackups}"
 KEEP_DAYS="${BACKUP_KEEP_DAYS:-7}"
 TIMESTAMP="$(date -u +%Y%m%d-%H%M%S)"
 WORK_DIR="$(mktemp -d)"
-ARCHIVE="/backups/mail-control-${TIMESTAMP}.tar.gz"
+PLAIN_ARCHIVE="$WORK_DIR/mail-control-${TIMESTAMP}.tar.gz"
+ARCHIVE="/backups/mail-control-${TIMESTAMP}.tar.gz.enc"
+
+ARCHIVE_PASSWORD="${BACKUP_ARCHIVE_PASSWORD:-}"
+if [[ -n "${BACKUP_ARCHIVE_PASSWORD_FILE:-}" && -s "$BACKUP_ARCHIVE_PASSWORD_FILE" ]]; then
+    ARCHIVE_PASSWORD="$(tr -d '\r\n' < "$BACKUP_ARCHIVE_PASSWORD_FILE")"
+fi
+: "${ARCHIVE_PASSWORD:?BACKUP_ARCHIVE_PASSWORD no configurada}"
+export ARCHIVE_PASSWORD PGPASSWORD="$POSTGRES_PASSWORD"
 
 cleanup() {
     rm -rf "$WORK_DIR"
 }
 trap cleanup EXIT
 
-export PGPASSWORD="$POSTGRES_PASSWORD"
-
+mkdir -p "$WORK_DIR/payload/config"
 pg_dump \
     --host=db \
     --port=5432 \
@@ -27,15 +34,26 @@ pg_dump \
     --format=custom \
     --no-owner \
     --no-acl \
-    --file="$WORK_DIR/database.dump"
+    --file="$WORK_DIR/payload/database.dump"
 
-sha256sum "$WORK_DIR/database.dump" \
-    > "$WORK_DIR/database.dump.sha256"
+if [[ -f /source/config/.env ]]; then
+    cp -a /source/config/.env "$WORK_DIR/payload/config/.env"
+fi
+{
+    printf 'created_utc=%s\n' "$(date -u --iso-8601=seconds)"
+    printf 'database=%s\n' "$POSTGRES_DB"
+    printf 'includes=database,environment\n'
+} > "$WORK_DIR/payload/manifest.txt"
 
-tar -czf "$ARCHIVE" \
-    -C "$WORK_DIR" \
-    database.dump \
-    database.dump.sha256
+(
+    cd "$WORK_DIR/payload"
+    find . -type f -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+)
+tar -czf "$PLAIN_ARCHIVE" -C "$WORK_DIR/payload" .
+openssl enc -aes-256-cbc -salt -pbkdf2 -iter 200000 \
+    -in "$PLAIN_ARCHIVE" \
+    -out "$ARCHIVE" \
+    -pass env:ARCHIVE_PASSWORD
 
 if ! mega-whoami >/dev/null 2>&1; then
     : "${MEGA_EMAIL:?MEGA_EMAIL no configurado y no existe una sesión}"
@@ -52,7 +70,7 @@ mega-ls "$MEGA_FOLDER/$(basename "$ARCHIVE")" >/dev/null
 CUTOFF="$(date -u -d "-${KEEP_DAYS} days" +%Y%m%d%H%M%S)"
 while IFS= read -r remote_file; do
     filename="$(basename "$remote_file")"
-    if [[ "$filename" =~ ^mail-control-([0-9]{8})-([0-9]{6})\.tar\.gz$ ]]; then
+    if [[ "$filename" =~ ^mail-control-([0-9]{8})-([0-9]{6})\.tar\.gz(\.enc)?$ ]]; then
         file_timestamp="${BASH_REMATCH[1]}${BASH_REMATCH[2]}"
         if [[ "$file_timestamp" < "$CUTOFF" ]]; then
             mega-rm "$remote_file"
@@ -61,13 +79,8 @@ while IFS= read -r remote_file; do
 done < <(
     mega-find "$MEGA_FOLDER" \
         --type=f \
-        --pattern="mail-control-*.tar.gz"
+        --pattern="mail-control-*.tar.gz*"
 )
 
-find /backups \
-    -type f \
-    -name "mail-control-*.tar.gz" \
-    -mtime +1 \
-    -delete
-
-echo "Backup completado: $(basename "$ARCHIVE")"
+find /backups -type f -name "mail-control-*.tar.gz*" -mtime +1 -delete
+echo "Backup cifrado completado: $(basename "$ARCHIVE")"

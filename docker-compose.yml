@@ -82,6 +82,7 @@ services:
     volumes:
       - backup_data:/backups
       - mega_session:/root/.megaCmd
+      - ./.env:/source/config/.env:ro
     mem_limit: 256m
     mem_reservation: 64m
 
