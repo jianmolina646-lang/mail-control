@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
 import redis as redis_lib
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 
 from ..core.config import settings
 from ..core.crypto import decrypt
@@ -324,3 +324,43 @@ def rebuild_subscription_states() -> int:
         raise
     finally:
         db.close()
+
+
+@celery_app.task(name="app.workers.tasks.send_telegram_daily_summary")
+def send_telegram_daily_summary() -> int:
+    """Envía a las 08:00 de Lima un resumen operativo sin datos sensibles."""
+    if not settings.TELEGRAM_DAILY_SUMMARY:
+        return 0
+    db = SessionLocal()
+    try:
+        accounts = db.scalar(select(func.count(MailAccount.id))) or 0
+        connected = db.scalar(
+            select(func.count(MailAccount.id)).where(MailAccount.last_status == "ok")
+        ) or 0
+        errors = db.scalar(
+            select(func.count(MailAccount.id)).where(MailAccount.last_status == "error")
+        ) or 0
+        alerts = db.scalar(
+            select(func.count(Alert.id)).where(Alert.resolved.is_(False))
+        ) or 0
+        since = datetime.now(timezone.utc) - timedelta(hours=24)
+        messages = db.scalar(
+            select(func.count(Message.id)).where(Message.received_at >= since)
+        ) or 0
+    finally:
+        db.close()
+    sent = telegram_notifier.send_message(
+        "☀️ <b>RESUMEN DIARIO · MAIL CONTROL</b>\n\n"
+        f"📬 Cuentas: <b>{accounts}</b>\n"
+        f"✅ Conectadas: <b>{connected}</b>\n"
+        f"⚠️ Con error: <b>{errors}</b>\n"
+        f"🚨 Alertas pendientes: <b>{alerts}</b>\n"
+        f"✉️ Correos recibidos en 24 h: <b>{messages}</b>",
+        reply_markup={
+            "inline_keyboard": [[
+                {"text": "Ver alertas", "callback_data": "alerts:0:all"},
+                {"text": "Ver cuentas", "callback_data": "accounts:0"},
+            ]]
+        },
+    )
+    return int(sent)

@@ -1,4 +1,4 @@
-"""Bot privado de consulta para el administrador de Mail Control."""
+"""Bot privado de operación para el administrador de Mail Control."""
 
 from __future__ import annotations
 
@@ -22,8 +22,13 @@ from .services.telegram_notifier import send_message
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("mail_control.telegram")
 _redis = redis_lib.Redis.from_url(settings.REDIS_URL)
-_CODE_RE = re.compile(
-    r"(?<!\d)(\d{4,8})(?!\d)",
+_PAGE_SIZE = 5
+_CODE_PATTERNS = (
+    re.compile(
+        r"(?i)(?:código|codigo|code|verification|verificación|inicio de sesión)"
+        r"[^0-9]{0,40}([0-9]{4,8})"
+    ),
+    re.compile(r"(?<!\d)(\d{6})(?!\d)"),
 )
 
 
@@ -42,93 +47,278 @@ def _menu() -> dict:
     return {
         "keyboard": [
             [{"text": "📊 Resumen"}, {"text": "🚨 Alertas"}],
-            [{"text": "📬 Cuentas"}, {"text": "❓ Ayuda"}],
+            [{"text": "📬 Cuentas"}, {"text": "🧾 Auditoría"}],
+            [{"text": "❓ Ayuda"}],
         ],
         "resize_keyboard": True,
         "is_persistent": True,
     }
 
 
+def _mask_email(email: str) -> str:
+    local, separator, domain = email.partition("@")
+    if not separator:
+        return email
+    visible = local[:2]
+    return f"{visible}{'•' * max(3, min(8, len(local) - len(visible)))}@{domain}"
+
+
+def _audit(action: str, detail: str = "") -> None:
+    event = json.dumps(
+        {
+            "at": datetime.now(timezone.utc).isoformat(),
+            "action": action,
+            "detail": detail[:180],
+        }
+    )
+    try:
+        pipe = _redis.pipeline()
+        pipe.lpush("mailctl:telegram:audit", event)
+        pipe.ltrim("mailctl:telegram:audit", 0, 199)
+        pipe.execute()
+    except Exception as exc:
+        logger.warning("No se pudo registrar auditoría Telegram: %s", exc)
+
+
 def _help() -> str:
     return (
         "🤖 <b>MAIL CONTROL</b>\n\n"
-        "Consulta privada del sistema:\n"
         "/resumen — estado general\n"
-        "/alertas — alertas pendientes\n"
-        "/cuentas — cuentas conectadas\n"
-        "/buscar correo@dominio.com — últimos correos de una cuenta\n"
-        "/codigo correo@dominio.com — último código reciente y confiable\n\n"
-        "Solo el administrador autorizado puede utilizar este bot."
+        "/alertas — incidencias con filtros y resolución\n"
+        "/cuentas — estado y sincronización inmediata\n"
+        "/buscar correo@dominio.com — últimos mensajes\n"
+        "/codigo correo@dominio.com — código reciente confiable\n"
+        "/auditoria — últimas operaciones del bot\n\n"
+        "Las acciones administrativas requieren confirmación y solo funcionan "
+        "desde la cuenta autorizada."
     )
 
 
-def _summary() -> str:
+def _summary() -> tuple[str, dict]:
     db = SessionLocal()
     try:
         accounts = db.scalar(select(func.count(MailAccount.id))) or 0
         connected = db.scalar(
             select(func.count(MailAccount.id)).where(MailAccount.last_status == "ok")
         ) or 0
+        errors = db.scalar(
+            select(func.count(MailAccount.id)).where(MailAccount.last_status == "error")
+        ) or 0
         open_alerts = db.scalar(
             select(func.count(Alert.id)).where(Alert.resolved.is_(False))
         ) or 0
         subscriptions = db.scalar(select(func.count(Subscription.id))) or 0
-        return (
+        text = (
             "📊 <b>RESUMEN DE MAIL CONTROL</b>\n\n"
             f"📬 Cuentas: <b>{accounts}</b>\n"
             f"✅ Conectadas: <b>{connected}</b>\n"
+            f"⚠️ Con error: <b>{errors}</b>\n"
             f"🚨 Alertas pendientes: <b>{open_alerts}</b>\n"
             f"📺 Servicios detectados: <b>{subscriptions}</b>"
         )
+        markup = {
+            "inline_keyboard": [
+                [
+                    {"text": "🚨 Ver alertas", "callback_data": "alerts:0:all"},
+                    {"text": "📬 Ver cuentas", "callback_data": "accounts:0"},
+                ],
+                [{"text": "🔄 Sincronizar todas", "callback_data": "syncall:ask"}],
+            ]
+        }
+        return text, markup
     finally:
         db.close()
 
 
-def _alerts() -> str:
+def _alerts(page: int = 0, service: str = "all") -> tuple[str, dict]:
+    page = max(0, page)
     db = SessionLocal()
     try:
-        rows = (
+        query = (
             db.query(Alert)
             .options(joinedload(Alert.message).joinedload(Message.account))
             .filter(Alert.resolved.is_(False))
-            .order_by(Alert.created_at.desc())
-            .limit(10)
+        )
+        if service != "all":
+            query = query.filter(func.lower(Alert.service) == service.lower())
+        total = query.count()
+        rows = (
+            query.order_by(Alert.created_at.desc())
+            .offset(page * _PAGE_SIZE)
+            .limit(_PAGE_SIZE)
             .all()
         )
-        if not rows:
-            return "✅ <b>Sin alertas pendientes</b>\n\nNo hay incidencias que requieran atención."
-        lines = ["🚨 <b>ALERTAS PENDIENTES</b>"]
+        title = "🚨 <b>ALERTAS PENDIENTES</b>"
+        if service != "all":
+            title += f"\nFiltro: <b>{html.escape(service)}</b>"
+        lines = [title, f"\nResultados: <b>{total}</b>"]
+        buttons: list[list[dict[str, str]]] = []
         for item in rows:
             lines.append(
                 "\n"
-                f"• <b>{html.escape(item.service or 'Servicio')}</b> · "
-                f"{html.escape(item.keyword)}\n"
-                f"  <code>{html.escape(item.message.account.email)}</code>\n"
-                f"  {html.escape(item.message.subject[:100])}"
+                f"• <b>#{item.id} · {html.escape(item.service or 'Servicio')}</b>\n"
+                f"  {html.escape(item.keyword)} · "
+                f"<code>{html.escape(_mask_email(item.message.account.email))}</code>\n"
+                f"  {html.escape(item.message.subject[:90])}"
             )
-        return "\n".join(lines)
+            buttons.append([{
+                "text": f"Revisar #{item.id} · {item.service or 'Servicio'}",
+                "callback_data": f"alert:{item.id}",
+            }])
+        if not rows:
+            lines.append("\n✅ No hay alertas en esta selección.")
+
+        navigation: list[dict[str, str]] = []
+        if page > 0:
+            navigation.append({
+                "text": "◀️ Anterior",
+                "callback_data": f"alerts:{page - 1}:{service}",
+            })
+        if (page + 1) * _PAGE_SIZE < total:
+            navigation.append({
+                "text": "Siguiente ▶️",
+                "callback_data": f"alerts:{page + 1}:{service}",
+            })
+        if navigation:
+            buttons.append(navigation)
+
+        services = [
+            row[0]
+            for row in db.execute(
+                select(Alert.service)
+                .where(Alert.resolved.is_(False), Alert.service != "")
+                .distinct()
+                .order_by(Alert.service)
+                .limit(8)
+            ).all()
+        ]
+        filter_buttons = [{"text": "Todas", "callback_data": "alerts:0:all"}]
+        filter_buttons.extend(
+            {
+                "text": item[:16],
+                "callback_data": f"alerts:0:{item}"[:64],
+            }
+            for item in services
+        )
+        for index in range(0, len(filter_buttons), 3):
+            buttons.append(filter_buttons[index:index + 3])
+        return "\n".join(lines), {"inline_keyboard": buttons}
     finally:
         db.close()
 
 
-def _accounts() -> str:
+def _alert_detail(alert_id: int) -> tuple[str, dict]:
     db = SessionLocal()
     try:
-        rows = db.scalars(select(MailAccount).order_by(MailAccount.email)).all()
-        if not rows:
-            return "📭 No hay cuentas conectadas."
-        lines = ["📬 <b>CUENTAS CONECTADAS</b>"]
-        for account in rows[:30]:
-            icon = "✅" if account.last_status == "ok" else "⚠️"
-            lines.append(
-                f"\n{icon} <code>{html.escape(account.email)}</code>\n"
-                f"   {html.escape(account.provider)} · {html.escape(account.last_status)}"
-            )
-        if len(rows) > 30:
-            lines.append(f"\n… y {len(rows) - 30} cuentas más.")
-        return "\n".join(lines)
+        item = (
+            db.query(Alert)
+            .options(joinedload(Alert.message).joinedload(Message.account))
+            .filter(Alert.id == alert_id)
+            .first()
+        )
+        if not item:
+            return "❌ La alerta ya no existe.", {"inline_keyboard": []}
+        state = "Resuelta" if item.resolved else "Pendiente"
+        text = (
+            f"🚨 <b>ALERTA #{item.id}</b>\n\n"
+            f"<b>Estado:</b> {state}\n"
+            f"<b>Severidad:</b> {html.escape(item.severity)}\n"
+            f"<b>Servicio:</b> {html.escape(item.service or 'No identificado')}\n"
+            f"<b>Cuenta:</b> <code>{html.escape(_mask_email(item.message.account.email))}</code>\n"
+            f"<b>Motivo:</b> {html.escape(item.keyword)}\n"
+            f"<b>Remitente:</b> {html.escape(item.message.from_name or item.message.from_addr)}\n"
+            f"<b>Asunto:</b> {html.escape(item.message.subject[:220])}\n"
+            f"<b>Fecha:</b> {item.created_at:%d/%m/%Y %H:%M} UTC"
+        )
+        buttons = [[
+            {"text": "📨 Ver en panel", "url": f"{settings.FRONTEND_URL.rstrip('/')}/alertas"},
+        ]]
+        if not item.resolved:
+            buttons.insert(0, [{
+                "text": "✅ Marcar resuelta",
+                "callback_data": f"resolve:ask:{item.id}",
+            }])
+        buttons.append([{"text": "◀️ Volver", "callback_data": "alerts:0:all"}])
+        return text, {"inline_keyboard": buttons}
     finally:
         db.close()
+
+
+def _resolve_alert(alert_id: int) -> str:
+    db = SessionLocal()
+    try:
+        item = db.get(Alert, alert_id)
+        if not item:
+            return "❌ La alerta ya no existe."
+        if item.resolved:
+            return f"ℹ️ La alerta #{alert_id} ya estaba resuelta."
+        item.resolved = True
+        db.commit()
+        _audit("resolve_alert", str(alert_id))
+        return f"✅ Alerta #{alert_id} marcada como resuelta."
+    finally:
+        db.close()
+
+
+def _accounts(page: int = 0) -> tuple[str, dict]:
+    page = max(0, page)
+    db = SessionLocal()
+    try:
+        total = db.scalar(select(func.count(MailAccount.id))) or 0
+        rows = db.scalars(
+            select(MailAccount)
+            .order_by(MailAccount.email)
+            .offset(page * _PAGE_SIZE)
+            .limit(_PAGE_SIZE)
+        ).all()
+        lines = ["📬 <b>CUENTAS CONECTADAS</b>", f"\nTotal: <b>{total}</b>"]
+        buttons: list[list[dict[str, str]]] = []
+        for account in rows:
+            icon = "✅" if account.last_status == "ok" else "⚠️"
+            oauth = " · OAuth2" if account.auth_method == "oauth2" else ""
+            lines.append(
+                f"\n{icon} <code>{html.escape(_mask_email(account.email))}</code>\n"
+                f"   {html.escape(account.provider)}{oauth} · {html.escape(account.last_status)}"
+            )
+            buttons.append([{
+                "text": f"🔄 Sincronizar {_mask_email(account.email)}",
+                "callback_data": f"sync:{account.id}",
+            }])
+        navigation: list[dict[str, str]] = []
+        if page > 0:
+            navigation.append({"text": "◀️ Anterior", "callback_data": f"accounts:{page - 1}"})
+        if (page + 1) * _PAGE_SIZE < total:
+            navigation.append({"text": "Siguiente ▶️", "callback_data": f"accounts:{page + 1}"})
+        if navigation:
+            buttons.append(navigation)
+        buttons.append([{"text": "🔄 Sincronizar todas", "callback_data": "syncall:ask"}])
+        return "\n".join(lines), {"inline_keyboard": buttons}
+    finally:
+        db.close()
+
+
+def _queue_sync(account_id: int) -> str:
+    db = SessionLocal()
+    try:
+        account = db.get(MailAccount, account_id)
+        if not account or not account.is_enabled:
+            return "❌ La cuenta no existe o está deshabilitada."
+        email = account.email
+    finally:
+        db.close()
+    from .workers.tasks import scan_account_chunk
+
+    scan_account_chunk.delay([account_id])
+    _audit("sync_account", str(account_id))
+    return f"🔄 Sincronización programada para <code>{html.escape(_mask_email(email))}</code>."
+
+
+def _queue_sync_all() -> str:
+    from .workers.tasks import scan_all_accounts
+
+    scan_all_accounts.delay()
+    _audit("sync_all")
+    return "🔄 Sincronización de todas las cuentas programada."
 
 
 def _find_account(email: str) -> tuple[MailAccount | None, list[Message]]:
@@ -139,16 +329,16 @@ def _find_account(email: str) -> tuple[MailAccount | None, list[Message]]:
         )
         if not account:
             return None, []
-        messages = db.scalars(
+        messages = list(db.scalars(
             select(Message)
             .where(Message.account_id == account.id)
             .order_by(Message.received_at.desc())
             .limit(8)
-        ).all()
+        ).all())
         db.expunge(account)
         for message in messages:
             db.expunge(message)
-        return account, list(messages)
+        return account, messages
     finally:
         db.close()
 
@@ -158,14 +348,24 @@ def _search(email: str) -> str:
     if not account:
         return "❌ Esa cuenta no está registrada en Mail Control."
     if not messages:
-        return f"📭 No hay correos guardados para <code>{html.escape(email)}</code>."
-    lines = [f"🔎 <b>ÚLTIMOS CORREOS</b>\n<code>{html.escape(email)}</code>"]
+        return f"📭 No hay correos guardados para <code>{html.escape(_mask_email(email))}</code>."
+    lines = [f"🔎 <b>ÚLTIMOS CORREOS</b>\n<code>{html.escape(_mask_email(email))}</code>"]
     for message in messages:
         lines.append(
             f"\n• <b>{html.escape(message.from_name or message.from_addr)[:80]}</b>\n"
             f"  {html.escape(message.subject[:120])}"
         )
+    _audit("search_mail", _mask_email(email))
     return "\n".join(lines)
+
+
+def _extract_code(message: Message) -> str | None:
+    source = f"{message.subject}\n{message.snippet}\n{message.body_text[:4000]}"
+    for pattern in _CODE_PATTERNS:
+        match = pattern.search(source)
+        if match:
+            return match.group(1)
+    return None
 
 
 def _code(email: str) -> str:
@@ -188,50 +388,154 @@ def _code(email: str) -> str:
             .limit(10)
         ).all()
         for message in messages:
-            source = f"{message.subject}\n{message.body_text[:4000]}"
-            match = _CODE_RE.search(source)
-            if match:
+            code = _extract_code(message)
+            if code:
+                _audit("read_code", _mask_email(email))
                 return (
                     "🔐 <b>CÓDIGO RECIENTE</b>\n\n"
-                    f"Cuenta: <code>{html.escape(email)}</code>\n"
-                    f"Código: <code>{match.group(1)}</code>\n"
+                    f"Cuenta: <code>{html.escape(_mask_email(email))}</code>\n"
+                    f"Código: <code>{code}</code>\n"
                     f"Remitente: {html.escape(message.from_name or message.from_addr)}\n\n"
-                    "No compartas este código con personas no autorizadas."
+                    "Este mensaje se entrega únicamente al administrador autorizado."
                 )
         return "⏳ No encontré un código confiable recibido durante los últimos 15 minutos."
     finally:
         db.close()
 
 
-def _handle(update: dict) -> None:
+def _audit_report() -> str:
+    try:
+        records = _redis.lrange("mailctl:telegram:audit", 0, 9)
+    except Exception:
+        return "⚠️ No se pudo consultar la auditoría."
+    if not records:
+        return "🧾 Todavía no hay operaciones administrativas registradas."
+    lines = ["🧾 <b>ÚLTIMAS OPERACIONES</b>"]
+    for raw in records:
+        event = json.loads(raw)
+        timestamp = datetime.fromisoformat(event["at"]).strftime("%d/%m %H:%M")
+        lines.append(
+            f"\n• <b>{html.escape(event['action'])}</b> · {timestamp} UTC"
+            + (f"\n  {html.escape(event['detail'])}" if event.get("detail") else "")
+        )
+    return "\n".join(lines)
+
+
+def _authorized(chat: dict, sender: dict) -> bool:
+    return (
+        chat.get("type") == "private"
+        and int(chat.get("id") or 0) == settings.TELEGRAM_ADMIN_CHAT_ID
+        and int(sender.get("id") or 0) == settings.TELEGRAM_ADMIN_CHAT_ID
+    )
+
+
+def _edit(callback: dict, text: str, markup: dict | None = None) -> None:
+    message = callback.get("message") or {}
+    payload: dict[str, object] = {
+        "chat_id": settings.TELEGRAM_ADMIN_CHAT_ID,
+        "message_id": message.get("message_id"),
+        "text": text,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": "true",
+    }
+    if markup is not None:
+        payload["reply_markup"] = json.dumps(markup)
+    try:
+        _api("editMessageText", payload, timeout=15)
+    except Exception:
+        send_message(text, reply_markup=markup)
+
+
+def _handle_callback(update: dict) -> None:
+    callback = update.get("callback_query") or {}
+    sender = callback.get("from") or {}
+    message = callback.get("message") or {}
+    if not _authorized(message.get("chat") or {}, sender):
+        return
+    data = callback.get("data") or ""
+    try:
+        _api("answerCallbackQuery", {"callback_query_id": callback.get("id")}, timeout=10)
+    except Exception:
+        pass
+
+    if data.startswith("alerts:"):
+        _, page, service = data.split(":", 2)
+        text, markup = _alerts(int(page), service)
+        _edit(callback, text, markup)
+    elif data.startswith("alert:"):
+        text, markup = _alert_detail(int(data.split(":")[1]))
+        _edit(callback, text, markup)
+    elif data.startswith("resolve:ask:"):
+        alert_id = int(data.rsplit(":", 1)[1])
+        _edit(
+            callback,
+            f"⚠️ <b>CONFIRMAR ACCIÓN</b>\n\n¿Marcar la alerta #{alert_id} como resuelta?",
+            {"inline_keyboard": [[
+                {"text": "✅ Sí, resolver", "callback_data": f"resolve:yes:{alert_id}"},
+                {"text": "Cancelar", "callback_data": f"alert:{alert_id}"},
+            ]]},
+        )
+    elif data.startswith("resolve:yes:"):
+        alert_id = int(data.rsplit(":", 1)[1])
+        _edit(callback, _resolve_alert(alert_id), {
+            "inline_keyboard": [[{"text": "Volver a alertas", "callback_data": "alerts:0:all"}]]
+        })
+    elif data.startswith("accounts:"):
+        text, markup = _accounts(int(data.split(":")[1]))
+        _edit(callback, text, markup)
+    elif data.startswith("sync:"):
+        _edit(callback, _queue_sync(int(data.split(":")[1])))
+    elif data == "syncall:ask":
+        _edit(
+            callback,
+            "⚠️ <b>CONFIRMAR SINCRONIZACIÓN</b>\n\n"
+            "Se conectará a todas las cuentas habilitadas.",
+            {"inline_keyboard": [[
+                {"text": "✅ Confirmar", "callback_data": "syncall:yes"},
+                {"text": "Cancelar", "callback_data": "accounts:0"},
+            ]]},
+        )
+    elif data == "syncall:yes":
+        _edit(callback, _queue_sync_all())
+
+
+def _handle_message(update: dict) -> None:
     message = update.get("message") or {}
     chat = message.get("chat") or {}
     sender = message.get("from") or {}
+    if not _authorized(chat, sender):
+        logger.warning("Acceso Telegram rechazado para user_id=%s", sender.get("id"))
+        return
     text = (message.get("text") or "").strip()
-    chat_id = int(chat.get("id") or 0)
-    user_id = int(sender.get("id") or 0)
-
-    if chat.get("type") != "private":
-        return
-    if user_id != settings.TELEGRAM_ADMIN_CHAT_ID or chat_id != settings.TELEGRAM_ADMIN_CHAT_ID:
-        logger.warning("Acceso Telegram rechazado para user_id=%s", user_id)
-        return
-
     normalized = text.lower()
+    _audit("command", normalized.split(maxsplit=1)[0][:40])
+
     if normalized in {"/start", "/ayuda", "/help", "❓ ayuda"}:
         send_message(_help(), reply_markup=_menu())
     elif normalized in {"/resumen", "📊 resumen"}:
-        send_message(_summary(), reply_markup=_menu())
+        body, markup = _summary()
+        send_message(body, reply_markup=markup)
     elif normalized in {"/alertas", "🚨 alertas"}:
-        send_message(_alerts(), reply_markup=_menu())
+        body, markup = _alerts()
+        send_message(body, reply_markup=markup)
     elif normalized in {"/cuentas", "📬 cuentas"}:
-        send_message(_accounts(), reply_markup=_menu())
+        body, markup = _accounts()
+        send_message(body, reply_markup=markup)
+    elif normalized in {"/auditoria", "🧾 auditoría", "🧾 auditoria"}:
+        send_message(_audit_report(), reply_markup=_menu())
     elif normalized.startswith("/buscar "):
         send_message(_search(text.split(maxsplit=1)[1].strip()))
     elif normalized.startswith("/codigo "):
         send_message(_code(text.split(maxsplit=1)[1].strip()))
     else:
         send_message("No reconocí ese comando.\n\n" + _help(), reply_markup=_menu())
+
+
+def _handle(update: dict) -> None:
+    if update.get("callback_query"):
+        _handle_callback(update)
+    elif update.get("message"):
+        _handle_message(update)
 
 
 def run() -> None:
@@ -247,7 +551,11 @@ def run() -> None:
         try:
             result = _api(
                 "getUpdates",
-                {"offset": offset, "timeout": 30, "allowed_updates": json.dumps(["message"])},
+                {
+                    "offset": offset,
+                    "timeout": 30,
+                    "allowed_updates": json.dumps(["message", "callback_query"]),
+                },
                 timeout=40,
             )
             for update in result.get("result", []):

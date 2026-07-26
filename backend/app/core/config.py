@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     TELEGRAM_ADMIN_CHAT_ID: int = 0
     TELEGRAM_NOTIFY_ALERTS: bool = True
     TELEGRAM_NOTIFY_ACCOUNT_ERRORS: bool = True
+    TELEGRAM_DAILY_SUMMARY: bool = True
 
     # --- Encriptación de credenciales IMAP (Fernet, base64 de 32 bytes) ---
     CREDENTIALS_ENCRYPTION_KEY: str = ""

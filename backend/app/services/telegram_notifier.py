@@ -78,10 +78,16 @@ def notify_critical_alert(
     send_message(
         text,
         reply_markup={
-            "inline_keyboard": [[{
-                "text": "Abrir alertas",
-                "url": f"{settings.FRONTEND_URL.rstrip('/')}/alertas",
-            }]]
+            "inline_keyboard": [[
+                {
+                    "text": "Revisar alerta",
+                    "callback_data": f"alert:{alert_id}",
+                },
+                {
+                    "text": "Abrir panel",
+                    "url": f"{settings.FRONTEND_URL.rstrip('/')}/alertas",
+                },
+            ]]
         },
     )
 
@@ -97,9 +103,27 @@ def notify_account_error(*, account_id: int, email: str, error: str) -> None:
     except Exception:
         # Si Redis no está disponible, se omite el aviso para evitar duplicados.
         return
+    oauth_required = any(
+        marker in error.lower()
+        for marker in ("oauth", "autorización", "authorization", "token", "revincular")
+    )
+    title = "🔐 <b>CUENTA REQUIERE REVINCULACIÓN</b>" if oauth_required else (
+        "⚠️ <b>ERROR DE SINCRONIZACIÓN</b>"
+    )
+    action = (
+        "\n\nAbre <b>Cuentas conectadas</b> y pulsa <b>Revincular</b>."
+        if oauth_required
+        else "\n\nMail Control volverá a intentarlo automáticamente."
+    )
     send_message(
-        "⚠️ <b>ERROR DE SINCRONIZACIÓN</b>\n\n"
+        f"{title}\n\n"
         f"<b>Cuenta:</b> <code>{html.escape(email)}</code>\n"
-        f"<b>Detalle:</b> {html.escape(error[:350])}\n\n"
-        "Mail Control volverá a intentarlo automáticamente."
+        f"<b>Detalle:</b> {html.escape(error[:350])}"
+        f"{action}",
+        reply_markup={
+            "inline_keyboard": [[{
+                "text": "Abrir cuentas",
+                "url": f"{settings.FRONTEND_URL.rstrip('/')}/cuentas",
+            }]]
+        },
     )
