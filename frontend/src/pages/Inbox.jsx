@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FixedSizeList as List } from "react-window";
-import { AlertTriangle, Inbox as InboxIcon, RefreshCw, Search, ShieldAlert } from "lucide-react";
+import { AlertTriangle, Inbox as InboxIcon, MailCheck, RefreshCw, Search, ShieldAlert, Star, Tag } from "lucide-react";
 import MessageView from "../components/MessageView";
 import { EmptyState, PageHeader } from "../components/ui";
 import { api } from "../lib/api";
@@ -55,6 +55,8 @@ export default function Inbox() {
   };
 
   const activeLabel = accounts.find((item) => String(item.id) === accountId)?.email || "Todas las cuentas";
+  const alertCount = items.filter((item) => item.is_alert).length;
+  const untrustedCount = items.filter((item) => !item.sender_trusted).length;
   const Row = ({ index, style }) => {
     const message = items[index];
     if (!message) return null;
@@ -71,8 +73,15 @@ export default function Inbox() {
     </button>;
   };
 
-  return <div className="inbox-page flex min-h-full flex-col gap-5 p-4 md:p-7">
-    <PageHeader eyebrow="Centro de comunicaciones" title="Bandeja de entrada" description="Mensajes sincronizados de todas tus cuentas conectadas." />
+  return <div className="inbox-page flex min-h-full flex-col gap-4 p-4 md:p-6">
+    <PageHeader eyebrow="Correo" title="Bandeja de entrada" description="Mensajes sincronizados de todas tus cuentas conectadas." actions={<button onClick={sync} disabled={syncing || !accounts.length} className="btn-secondary"><RefreshCw size={15} className={syncing ? "animate-spin" : ""} /> Sincronizar ahora</button>} />
+    <div className="inbox-kpis">
+      <InboxKpi icon={InboxIcon} label="Todos los mensajes" value={total} tone="violet" />
+      <InboxKpi icon={MailCheck} label="En esta vista" value={items.length} tone="blue" />
+      <InboxKpi icon={Star} label="Alertas detectadas" value={alertCount} tone="amber" />
+      <InboxKpi icon={ShieldAlert} label="Sin verificar" value={untrustedCount} tone="red" />
+      <InboxKpi icon={Tag} label="Cuentas activas" value={accounts.filter((item) => item.is_enabled).length} tone="green" />
+    </div>
     <div className="panel flex min-h-[640px] flex-1 overflow-hidden">
       <aside className={`hidden w-60 shrink-0 border-r border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-950/40 ${selected ? "2xl:block" : "xl:block"}`}>
         <p className="px-4 pb-2 pt-4 text-[10px] font-semibold uppercase tracking-wider text-slate-400">Cuentas conectadas</p>
@@ -91,6 +100,10 @@ export default function Inbox() {
       <section className={`absolute inset-0 z-20 min-w-0 flex-1 bg-white dark:bg-slate-900 md:static md:z-auto ${selected ? "block" : "hidden md:block"}`}><MessageView id={selected} onClose={() => setSelected(null)} /></section>
     </div>
   </div>;
+}
+
+function InboxKpi({ icon: Icon, label, value, tone }) {
+  return <article className={`inbox-kpi is-${tone}`}><span><Icon size={15} /></span><div><small>{label}</small><strong>{value}</strong></div></article>;
 }
 
 function AccountOption({ active, label, detail, onClick }) { return <button onClick={onClick} className={`mx-2 mb-0.5 w-[calc(100%-1rem)] rounded-md border-l-2 px-3 py-2.5 text-left ${active ? "border-brand-600 bg-white text-brand-700 dark:bg-slate-900 dark:text-brand-200" : "border-transparent text-slate-600 hover:bg-white dark:text-slate-400 dark:hover:bg-slate-900"}`}><span className="block truncate text-sm font-medium">{label}</span><span className="mt-0.5 block truncate text-[11px] text-slate-400">{detail}</span></button>; }

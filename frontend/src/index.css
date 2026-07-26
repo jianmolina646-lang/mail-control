@@ -561,9 +561,9 @@
 
 /* Mail Control workspace v3 — dense, premium and operational */
 .app-shell{background:#f5f6fa}.dark .app-shell{background:#090b12}
-.app-sidebar{width:252px;border-right-color:rgba(255,255,255,.065);background:linear-gradient(180deg,#111421 0%,#0d1019 100%);box-shadow:18px 0 50px rgba(3,5,12,.13)}
-.app-sidebar.is-collapsed{width:76px}
-.app-brand{height:76px;border-bottom-color:rgba(255,255,255,.06)}
+.app-sidebar{width:220px;border-right-color:rgba(255,255,255,.065);background:linear-gradient(180deg,#111421 0%,#0d1019 100%);box-shadow:18px 0 50px rgba(3,5,12,.13)}
+.app-sidebar.is-collapsed{width:68px}
+.app-brand{height:68px;border-bottom-color:rgba(255,255,255,.06)}
 .app-brand-mark{width:38px;height:38px;border-color:rgba(168,85,247,.45);border-radius:11px;color:#f0e7ff;background:linear-gradient(145deg,#7c3aed,#4c1d95);box-shadow:0 8px 24px rgba(124,58,237,.25),inset 0 1px rgba(255,255,255,.2)}
 .app-brand-copy strong{font-size:14px;letter-spacing:-.015em}.app-brand-copy span{color:#716d87}
 .app-health{margin-top:18px;border-color:rgba(167,139,250,.1);background:linear-gradient(90deg,rgba(124,58,237,.08),rgba(255,255,255,.018))}
@@ -574,7 +574,7 @@
 .app-nav-link.is-active::before{left:-11px;width:3px;height:24px;background:#a78bfa;box-shadow:0 0 16px rgba(167,139,250,.7)}
 .app-user-avatar{border-color:rgba(167,139,250,.18);color:#ede9fe;background:linear-gradient(145deg,#2d2443,#1c2030)}
 .app-workspace{background:#f5f6fa}.dark .app-workspace{background:#090b12}
-.app-topbar{height:76px;border-color:#e4e6ec;background:rgba(250,251,253,.9)}.dark .app-topbar{border-color:#1d2130;background:rgba(13,16,25,.9)}
+.app-topbar{height:68px;border-color:#e4e6ec;background:rgba(250,251,253,.9)}.dark .app-topbar{border-color:#1d2130;background:rgba(13,16,25,.9)}
 .app-page-context span{color:#8b5cf6}.app-page-context strong{font-size:13px}
 .app-live-status{display:flex;align-items:center;gap:7px;margin-right:8px;padding:6px 10px;border:1px solid #e2e5eb;border-radius:7px;color:#687386;background:#fff;font-size:10px;font-weight:650}.dark .app-live-status{border-color:#242938;color:#8f97a9;background:#131722}
 .app-live-status i{width:6px;height:6px;border-radius:50%;background:#34d399;box-shadow:0 0 0 3px rgba(52,211,153,.1)}
@@ -657,6 +657,12 @@
 .account-kpi{display:block}.account-kpi strong{font-size:22px}.account-kpi.is-violet>i>em{background:#8b5cf6}
 
 .inbox-page{max-width:1500px;margin:0 auto}.inbox-page>.panel{border-radius:9px!important;background:#10141d!important}.inbox-page>.panel>aside{background:#0d1119!important}.inbox-page>.panel>section:nth-child(2)>div:first-child{background:#111620}
+.inbox-kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
+.inbox-kpi{display:flex;min-height:64px;align-items:center;gap:10px;padding:10px 12px;border:1px solid #202535;border-radius:8px;background:linear-gradient(145deg,#141824,#10131c)}
+.inbox-kpi>span{display:grid;width:30px;height:30px;place-items:center;border-radius:7px;color:#a78bfa;background:rgba(139,92,246,.11)}
+.inbox-kpi small{display:block;color:#697386;font-size:8px}.inbox-kpi strong{display:block;margin-top:3px;color:#f4f2f7;font-size:17px;line-height:1}
+.inbox-kpi.is-blue>span{color:#60a5fa;background:rgba(59,130,246,.1)}.inbox-kpi.is-amber>span{color:#fbbf24;background:rgba(245,158,11,.1)}
+.inbox-kpi.is-red>span{color:#fb7185;background:rgba(244,63,94,.1)}.inbox-kpi.is-green>span{color:#34d399;background:rgba(16,185,129,.1)}
 
 @media(max-width:900px){
   .security-layout{grid-template-columns:1fr}.security-nav{display:grid;grid-template-columns:repeat(3,1fr)}.security-nav button{justify-content:center}.security-nav button svg:last-child{display:none}
@@ -666,4 +672,5 @@
   .security-page{padding:18px 13px 90px}.security-nav{display:flex;overflow-x:auto;flex-direction:row}.security-nav button{min-width:max-content}.security-checks{grid-template-columns:1fr}.security-submit-row .btn-primary{width:100%}
   .security-advice{align-items:flex-start}.security-advice small{display:none}.alerts-kpis,.accounts-kpis{display:flex;overflow-x:auto}.alert-kpi,.account-kpi{min-width:180px}
   .alerts-page,.accounts-page,.inbox-page{padding:14px 12px 85px!important}
+  .inbox-kpis{display:flex;overflow-x:auto}.inbox-kpi{min-width:145px}
 }
