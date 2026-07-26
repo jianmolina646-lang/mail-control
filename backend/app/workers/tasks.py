@@ -109,7 +109,18 @@ def scan_account_chunk(self, account_ids: list[int]) -> int:
             raise
 
 
-def _sync_one_account(account_id: int) -> None:
+@celery_app.task(name="app.workers.tasks.scan_account_for_codes")
+def scan_account_for_codes(account_id: int) -> int:
+    """Sincronización prioritaria: solo 10 mensajes recientes de INBOX."""
+    with imap_slot(account_id) as ok:
+        if not ok:
+            scan_account_for_codes.apply_async(args=[account_id], countdown=3, priority=9)
+            return 0
+        _sync_one_account(account_id, urgent=True)
+        return 1
+
+
+def _sync_one_account(account_id: int, *, urgent: bool = False) -> None:
     db = SessionLocal()
     try:
         acct = db.get(MailAccount, account_id)
@@ -123,7 +134,11 @@ def _sync_one_account(account_id: int) -> None:
                 if not imap_service.prepare_microsoft_oauth(acct):
                     raise RuntimeError("Cuenta Microsoft pendiente de autorización OAuth2")
                 db.commit()
-            parsed = imap_service.fetch_recent(_AccountProxy(acct))
+            parsed = imap_service.fetch_recent(
+                _AccountProxy(acct),
+                limit=10 if urgent else None,
+                include_other_folders=not urgent,
+            )
             logger.info("IMAP fetch_recent: %d correos traídos de %s", len(parsed), acct.email)
         except Exception as exc:
             acct.last_status = "error"

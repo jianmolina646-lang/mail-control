@@ -61,9 +61,9 @@ def claim_code(data: CodeRequest, db: Session = Depends(get_db)):
             try:
                 key = f"mailctl:agent-sync:{account_id}"
                 if _redis.set(key, "1", ex=15, nx=True):
-                    from ..workers.tasks import scan_account_chunk
+                    from ..workers.tasks import scan_account_for_codes
 
-                    scan_account_chunk.delay([account_id])
+                    scan_account_for_codes.apply_async(args=[account_id], priority=9)
                     sync_queued = True
             except Exception:
                 # La consulta sigue siendo segura aunque Redis esté reiniciando;

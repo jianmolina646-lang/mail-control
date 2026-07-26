@@ -369,7 +369,12 @@ def _fetch_other_received_folders(
     return results
 
 
-def fetch_recent(account, limit: int | None = None) -> list[ParsedMessage]:
+def fetch_recent(
+    account,
+    limit: int | None = None,
+    *,
+    include_other_folders: bool = True,
+) -> list[ParsedMessage]:
     """Trae los últimos limit correos de la casilla. Abre y cierra la conexión.
     account debe exponer imap_host, imap_port, imap_user, email y una property
     password ya desencriptada. También puede exponer oauth_token u oauth_refresh_token.
@@ -405,7 +410,8 @@ def fetch_recent(account, limit: int | None = None) -> list[ParsedMessage]:
         
         if not uids:
             logger.info("INBOX vacía para %s", username)
-            results.extend(_fetch_other_received_folders(server, limit))
+            if include_other_folders:
+                results.extend(_fetch_other_received_folders(server, limit))
             return results
         
         # Traer los últimos N correos
@@ -461,7 +467,8 @@ def fetch_recent(account, limit: int | None = None) -> list[ParsedMessage]:
                 )
             )
 
-        results.extend(_fetch_other_received_folders(server, limit))
+        if include_other_folders:
+            results.extend(_fetch_other_received_folders(server, limit))
     
     logger.info("fetch_recent completado para %s: %d correos parseados", username, len(results))
     return results
