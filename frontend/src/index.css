@@ -260,3 +260,55 @@
   .app-topbar { height: 60px; padding: 0 13px; }.app-live-status, .app-page-context span { display: none; }.page-header h1 { font-size: 22px; }.message-activity-row { grid-template-columns: 32px minmax(0,1fr) 16px; }.message-activity-row time { display: none; }.mail-message-frame { min-height: 100%; }
   .login-reference-header { height: 60px; padding: 0 15px; }.login-reference-status { display: none; }.login-reference-main { display: block; padding: 24px 14px 30px; }.login-reference-story { display: block; }.login-reference-copy { text-align: center; }.login-reference-copy h1 { font-size: 38px; }.login-reference-copy > p { margin-right: auto; margin-left: auto; }.login-envelope-scene { min-height: 210px; margin: -10px 0; transform: scale(.78); }.login-benefits { display: none; }.login-reference-access { margin-top: 4px; }.login-access-card { padding: 20px 16px; }.login-reference-footer { justify-content: center; }.login-reference-footer span:last-child { display: none; }
 }
+
+/* Cross-screen legibility and final responsive pass */
+.app-brand-copy span, .app-health small, .app-nav-group > p, .app-alert-count,
+.app-user span, .app-collapse, .app-page-context span, .app-live-status, .page-eyebrow {
+  font-size: 9px;
+}
+.app-health span:not(.app-health-dot), .app-user strong { font-size: 10px; }
+.metric-label { font-size: 11px; }.metric-kicker { font-size: 9px; }.metric-card > p { font-size: 10px; }
+.section-title p, .section-title > a, .message-activity-row small, .message-activity-row time { font-size: 10px; }
+.inbox-kpi small, .account-kpi small, .alert-kpi small { font-size: 10px; }
+.account-kpi p, .alert-kpi p { font-size: 9px; }
+.subscriptions-hero > div > span { font-size: 9px; }.subscriptions-primary { font-size: 11px; }
+.subscription-metric small { font-size: 10px; }.subscription-metric > p { font-size: 9px; }
+.subscription-search, .subscription-filters select, .subscription-filter-count { font-size: 11px; }
+.subscription-table-title strong { font-size: 11px; }.subscription-table-title span { font-size: 9px; }
+.subscription-table-wrap th { font-size: 9px; }.subscription-table-wrap td { font-size: 10px; }
+.subscription-service-mark { font-size: 10px; }.subscription-status { font-size: 9px; }
+.summary-card h3 { font-size: 11px; }.summary-donut small { font-size: 8px; }.summary-donut li, .summary-services > div { font-size: 9px; }.summary-card > button { font-size: 10px; }
+.security-heading > span { font-size: 9px; }.security-nav button, .security-card-heading p,
+.security-field > span, .security-checks li, .security-advice strong { font-size: 10px; }
+.security-advice p, .security-advice small { font-size: 9px; }
+.login-reference-brand small, .login-reference-status, .login-reference-eyebrow,
+.login-access-kicker, .login-reference-trust, .login-reference-footer { font-size: 9px; }
+.login-benefits p, .login-access-card > p, .login-reference-form label > span,
+.login-reference-error, .login-reference-submit { font-size: 10px; }
+.login-reference-form input { font-size: 11px; }
+
+@media (max-width: 760px) {
+  .btn-primary, .btn-secondary, .btn-quiet { min-height: 42px; }
+  .input { min-height: 44px; font-size: 14px; }
+  .subscription-table-wrap { overflow: visible; }
+  .subscription-table-wrap table,
+  .subscription-table-wrap tbody,
+  .subscription-table-wrap tr,
+  .subscription-table-wrap td { display: block; width: 100%; min-width: 0; }
+  .subscription-table-wrap thead { display: none; }
+  .subscription-table-wrap tbody { display: grid; gap: 8px; padding: 8px; }
+  .subscription-table-wrap tr { overflow: hidden; border: 1px solid var(--mc-border); border-radius: var(--mc-radius); background: var(--mc-surface); }
+  .subscription-table-wrap td { display: grid; min-height: 38px; height: auto; grid-template-columns: 105px minmax(0,1fr); align-items: center; gap: 8px; padding: 8px 11px; border-top: 1px solid var(--mc-border); font-size: 11px; }
+  .subscription-table-wrap td:first-child { border-top: 0; }
+  .subscription-table-wrap td::before { color: var(--mc-subtle); font-size: 9px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
+  .subscription-table-wrap td:nth-child(1)::before { content: "Servicio"; }
+  .subscription-table-wrap td:nth-child(2)::before { content: "Cuenta"; }
+  .subscription-table-wrap td:nth-child(3)::before { content: "Estado"; }
+  .subscription-table-wrap td:nth-child(4)::before { content: "Motivo"; }
+  .subscription-table-wrap td:nth-child(5)::before { content: "Actividad"; }
+  .subscription-table-wrap td:nth-child(6)::before { content: "Acciones"; }
+  .subscription-email, .subscription-reason { max-width: none; white-space: normal; overflow-wrap: anywhere; }
+  .subscription-table-wrap td[colspan] { display: block; }
+  .subscription-table-wrap td[colspan]::before { display: none; }
+  .security-advice { align-items: flex-start; }.security-advice small { display: none; }
+}
