@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     LOGIN_BLOCK_SECONDS: int = 15 * 60
     SESSION_COOKIE_NAME: str = "__Host-mailctl_session"
     SESSION_COOKIE_SECURE: bool = True
+    # Token independiente para el agente local. Nunca reutilizar SECRET_KEY/JWT.
+    MAIL_AGENT_API_TOKEN: str = ""
+    MAIL_AGENT_CODE_MAX_AGE_SECONDS: int = 600
 
     # --- Encriptación de credenciales IMAP (Fernet, base64 de 32 bytes) ---
     CREDENTIALS_ENCRYPTION_KEY: str = ""

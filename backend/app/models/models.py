@@ -108,6 +108,24 @@ class Message(Base):
     )
 
 
+class AgentCodeReceipt(Base):
+    """Registra códigos entregados al agente para impedir su reutilización."""
+
+    __tablename__ = "agent_code_receipts"
+    __table_args__ = (
+        UniqueConstraint("message_id", "code_hash", name="uq_agent_code_message_hash"),
+        Index("ix_agent_code_job", "job_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    job_id: Mapped[str] = mapped_column(String(36), index=True)
+    message_id: Mapped[int] = mapped_column(
+        ForeignKey("messages.id", ondelete="CASCADE"), index=True
+    )
+    code_hash: Mapped[str] = mapped_column(String(64))
+    delivered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 class Alert(Base):
     """Alerta crítica de suscripción (radar de streaming)."""
 

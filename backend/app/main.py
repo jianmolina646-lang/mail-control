@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import inspect, text
 
 from .api.routes import router
+from .api.agent_routes import router as agent_router
 from .core.config import settings
 from .core.db import Base, SessionLocal, engine
 from .core.security import hash_password
@@ -34,6 +35,7 @@ app.add_middleware(
     allow_headers=["Content-Type", "Authorization"],
 )
 app.include_router(router)
+app.include_router(agent_router)
 
 
 @app.middleware("http")
