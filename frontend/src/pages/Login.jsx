@@ -47,7 +47,7 @@ export default function Login() {
     <section className="login-reference-main">
       <div className="login-reference-story">
         <div className="login-reference-copy">
-          <span className="login-reference-eyebrow"><Sparkles size={12} /> Inteligencia para tu operación</span>
+          <span className="login-reference-eyebrow"><Sparkles size={12} /> Supervisión para tu operación</span>
           <h1>Tu correo deja<br />de ser ruido.<br /><em>Se convierte en<br />control.</em></h1>
           <p>Supervisa cuentas, detecta incidencias de suscripción y actúa antes de que un pago interrumpa el servicio.</p>
         </div>

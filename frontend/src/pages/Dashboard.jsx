@@ -37,10 +37,10 @@ export default function Dashboard() {
     {error && <Notice tone="error">{error}</Notice>}
     {!data ? <div className="panel"><LoadingBlock rows={5} /></div> : <>
       <section aria-label="Indicadores principales" className="metric-grid">
-        <Indicator icon={UsersRound} label="Cuentas conectadas" value={data.stats.accounts_total} detail={`${data.stats.accounts_ok} sincronizando correctamente`} ratio={data.stats.accounts_total ? data.stats.accounts_ok / data.stats.accounts_total : 0} />
-        <Indicator icon={MailCheck} label="Mensajes procesados" value={data.stats.messages_total} detail="Disponibles en la bandeja" ratio={Math.min(data.stats.messages_total / 100, 1)} />
-        <Indicator icon={AlertTriangle} label="Alertas abiertas" value={data.stats.alerts_open} detail={data.stats.alerts_open ? "Requieren revisión" : "Operación sin incidencias"} critical={data.stats.alerts_open > 0} ratio={data.stats.alerts_open ? .82 : .12} />
-        <Indicator icon={CreditCard} label="Suscripciones en riesgo" value={subscriptionRisk} detail={`${data.subscriptions.active} activas confirmadas`} critical={data.subscriptions.payment_failed + data.subscriptions.suspended > 0} ratio={subscriptionRisk ? .72 : .08} />
+        <Indicator icon={UsersRound} label="Cuentas conectadas" value={data.stats.accounts_total} detail={`${data.stats.accounts_ok} sincronizando correctamente`} />
+        <Indicator icon={MailCheck} label="Mensajes procesados" value={data.stats.messages_total} detail="Disponibles en la bandeja" />
+        <Indicator icon={AlertTriangle} label="Alertas abiertas" value={data.stats.alerts_open} detail={data.stats.alerts_open ? "Requieren revisión" : "Operación sin incidencias"} critical={data.stats.alerts_open > 0} />
+        <Indicator icon={CreditCard} label="Suscripciones en riesgo" value={subscriptionRisk} detail={`${data.subscriptions.active} activas confirmadas`} critical={data.subscriptions.payment_failed + data.subscriptions.suspended > 0} />
       </section>
 
       <div className="dashboard-main-grid">
@@ -88,11 +88,10 @@ export default function Dashboard() {
   </div>;
 }
 
-function Indicator({ icon: Icon, label, value, detail, critical, ratio = 0 }) {
-  const bars = [.42, .68, .52, .88, .62];
+function Indicator({ icon: Icon, label, value, detail, critical }) {
   return <article className={`metric-card ${critical ? "is-critical" : ""}`}>
     <div className="metric-card-head"><span className="metric-icon"><Icon size={16} /></span><span className="metric-label">{label}</span><span className="metric-kicker">{critical ? "Atención" : "En línea"}</span></div>
-    <div className="metric-card-body"><strong>{value}</strong><div className="metric-spark" aria-hidden="true">{bars.map((bar, index) => <i key={index} style={{ height: `${Math.max(12, bar * ratio * 42 + 10)}px` }} />)}</div></div>
+    <div className="metric-card-body"><strong>{value}</strong></div>
     <p>{detail}</p>
   </article>;
 }

@@ -166,8 +166,7 @@ export default function Subscriptions() {
 }
 
 function Metric({ label, value, icon: Icon, tone, detail }) {
-  const bars = [28, 44, 34, 58, 43, 67, 53, 74, 61, 81];
-  return <article className={`subscription-metric tone-${tone}`}><div><span><Icon size={15} /></span><small>{label}</small></div><strong>{value}</strong><p>{detail}</p><div className="subscription-spark">{bars.map((height, index) => <i key={index} style={{ height: `${height}%` }} />)}</div></article>;
+  return <article className={`subscription-metric tone-${tone}`}><div><span><Icon size={15} /></span><small>{label}</small></div><strong>{value}</strong><p>{detail}</p></article>;
 }
 
 function ServiceMark({ name }) {

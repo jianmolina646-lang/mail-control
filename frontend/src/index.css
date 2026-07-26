@@ -163,7 +163,7 @@
 .metric-label { color: var(--mc-muted); font-size: 10px; }.metric-kicker { margin-left: auto; color: var(--mc-success); font-size: 8px; font-weight: 700; text-transform: uppercase; }
 .metric-card.is-critical .metric-kicker { color: var(--mc-danger); }
 .metric-card-body { margin-top: 12px; }.metric-card-body > strong { color: var(--mc-text); font-size: 26px; font-weight: 680; letter-spacing: -.04em; }
-.metric-card > p { margin: 4px 0 0; color: var(--mc-subtle); font-size: 9px; }.metric-spark { display: none; }
+.metric-card > p { margin: 4px 0 0; color: var(--mc-subtle); font-size: 9px; }
 .dashboard-main-grid { display: grid; grid-template-columns: minmax(0,1.45fr) minmax(300px,.55fr); gap: 14px; }
 .section-title { display: flex; min-height: 60px; align-items: center; gap: 10px; padding: 12px 15px; border-bottom: 1px solid var(--mc-border); }
 .section-title-icon { display: grid; width: 30px; height: 30px; place-items: center; border-radius: 6px; color: var(--mc-accent); background: var(--mc-accent-soft); }
@@ -204,7 +204,7 @@
 .subscriptions-primary { display: flex; min-height: 36px; align-items: center; gap: 7px; padding: 0 13px; border: 1px solid #7652d6; border-radius: 6px; color: #fff; background: #7652d6; font-size: 10px; font-weight: 650; }
 .subscription-metrics { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); margin-bottom: 12px; border: 1px solid var(--mc-border); border-radius: var(--mc-radius); background: var(--mc-surface); }
 .subscription-metric { min-height: 88px; padding: 12px; border-right: 1px solid var(--mc-border); }.subscription-metric:last-child { border-right: 0; }.subscription-metric > div:first-child { display: flex; align-items: center; gap: 7px; }.subscription-metric > div:first-child > span { display: grid; width: 25px; height: 25px; place-items: center; border-radius: 6px; color: var(--mc-accent); background: var(--mc-accent-soft); }
-.subscription-metric small { color: var(--mc-muted); font-size: 8px; }.subscription-metric > strong { display: block; margin-top: 8px; color: var(--mc-text); font-size: 21px; }.subscription-metric > p { margin: 3px 0 0; color: var(--mc-subtle); font-size: 8px; }.subscription-spark { display: none; }
+.subscription-metric small { color: var(--mc-muted); font-size: 8px; }.subscription-metric > strong { display: block; margin-top: 8px; color: var(--mc-text); font-size: 21px; }.subscription-metric > p { margin: 3px 0 0; color: var(--mc-subtle); font-size: 8px; }
 .tone-green > div:first-child > span { color: var(--mc-success); background: rgba(33,168,117,.1); }.tone-amber > div:first-child > span { color: var(--mc-warning); background: rgba(216,146,33,.1); }.tone-red > div:first-child > span { color: var(--mc-danger); background: rgba(220,75,94,.1); }.tone-blue > div:first-child > span { color: var(--mc-info); background: rgba(82,124,204,.1); }
 .subscriptions-layout { display: grid; grid-template-columns: minmax(0,1fr) 225px; gap: 12px; }.subscriptions-main { min-width: 0; }
 .subscription-filters { display: grid; grid-template-columns: minmax(220px,1fr) 165px 145px 42px; gap: 6px; margin-bottom: 7px; }
@@ -253,7 +253,7 @@
   .login-reference-main { grid-template-columns: 1fr; }.login-reference-story { grid-template-columns: 1fr 1fr; }.login-reference-access { justify-content: center; }.login-access-card { width: 100%; max-width: 520px; }.login-reference-footer { position: relative; right: auto; bottom: auto; left: auto; padding: 0 20px 18px; }.login-reference-main { padding-bottom: 25px; }
 }
 @media (max-width: 760px) {
-  .subscriptions-page { padding: 16px 12px 85px; }.subscriptions-hero, .page-header { align-items: flex-start; flex-direction: column; }.subscriptions-primary, .page-actions, .page-actions > * { width: 100%; }.subscription-metrics, .inbox-kpis, .accounts-kpis, .alerts-kpis { display: flex; overflow-x: auto; border: 0; background: transparent; scroll-snap-type: x mandatory; }.subscription-metric, .inbox-kpi, .account-kpi, .alert-kpi { min-width: 165px; border: 1px solid var(--mc-border); border-radius: var(--mc-radius); background: var(--mc-surface); scroll-snap-align: start; }.subscription-filters { grid-template-columns: 1fr 1fr; }.subscription-search { grid-column: 1/-1; }.subscription-filter-count { display: none; }.subscription-table-wrap table { min-width: 760px; }.subscriptions-summary { grid-template-columns: 1fr; }
+  .subscriptions-page { padding: 16px 12px 85px; }.subscriptions-hero, .page-header { align-items: flex-start; flex-direction: column; }.subscriptions-primary, .page-actions, .page-actions > * { width: 100%; }.subscription-metrics, .inbox-kpis, .accounts-kpis, .alerts-kpis { border: 0; background: transparent; }.subscription-filter-count { display: none; }.subscriptions-summary { grid-template-columns: 1fr; }
   .accounts-page, .alerts-page, .inbox-page { padding: 14px 12px 80px !important; }.security-page { padding: 18px 13px 85px; }.security-checks { grid-template-columns: 1fr; }.security-submit-row .btn-primary { width: 100%; }
 }
 @media (max-width: 680px) {
@@ -311,4 +311,30 @@
   .subscription-table-wrap td[colspan] { display: block; }
   .subscription-table-wrap td[colspan]::before { display: none; }
   .security-advice { align-items: flex-start; }.security-advice small { display: none; }
+}
+
+/* Device layouts: reflow content instead of shrinking the desktop canvas */
+html, body, #root { max-width: 100%; overflow-x: hidden; }
+@media (max-width: 760px) {
+  .subscription-metrics, .inbox-kpis, .accounts-kpis, .alerts-kpis {
+    display: grid;
+    grid-template-columns: repeat(2,minmax(0,1fr));
+    gap: 8px;
+    overflow: visible;
+    scroll-snap-type: none;
+  }
+  .subscription-metric, .inbox-kpi, .account-kpi, .alert-kpi {
+    min-width: 0;
+    border: 1px solid var(--mc-border);
+    border-radius: var(--mc-radius);
+  }
+  .security-nav { flex-wrap: wrap; overflow: visible; }
+  .security-nav button { flex: 1 1 145px; justify-content: flex-start; }
+  .subscription-filters { grid-template-columns: 1fr; }
+  .subscription-search { grid-column: auto; }
+}
+@media (max-width: 360px) {
+  .subscription-metrics, .inbox-kpis, .accounts-kpis, .alerts-kpis { grid-template-columns: 1fr; }
+  .login-reference-copy h1 { font-size: 33px; }
+  .login-envelope-scene { min-height: 185px; }
 }
