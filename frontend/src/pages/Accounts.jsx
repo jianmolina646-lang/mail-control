@@ -58,9 +58,19 @@ export default function Accounts() {
 
   const microsoft = ["outlook", "hotmail"].includes(form.provider);
 
-  return <div className="mx-auto max-w-6xl space-y-6 p-4 md:p-7">
+  const connected = accounts.filter((account) => account.last_status === "ok" && account.is_enabled).length;
+  const failed = accounts.filter((account) => account.last_status === "error").length;
+  const pending = Math.max(0, accounts.length - connected - failed);
+
+  return <div className="accounts-page mx-auto max-w-6xl space-y-6 p-4 md:p-7">
     <PageHeader eyebrow="Infraestructura de correo" title="Cuentas conectadas" description="Conecta y supervisa las bandejas que Mail Control debe sincronizar." />
     {message && <Notice tone={message.tone}>{message.text}</Notice>}
+    <div className="accounts-kpis">
+      <AccountKpi tone="violet" label="Total de cuentas" value={accounts.length} detail="Bandejas registradas" />
+      <AccountKpi tone="green" label="Conectadas" value={connected} detail="Sincronización activa" />
+      <AccountKpi tone="red" label="Con error" value={failed} detail="Requieren revisión" />
+      <AccountKpi tone="amber" label="Pendientes" value={pending} detail="Esperando validación" />
+    </div>
     <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
       <section className="panel order-2 xl:order-1">
         <div className="border-b border-slate-200 px-5 py-3 dark:border-slate-800"><h2 className="text-sm font-semibold text-slate-900 dark:text-white">Cuentas ({accounts.length})</h2></div>
@@ -79,6 +89,12 @@ export default function Accounts() {
       </form>
     </div>
   </div>;
+}
+
+function AccountKpi({ tone, label, value, detail }) {
+  return <article className={`account-kpi is-${tone}`}>
+    <small>{label}</small><strong>{value}</strong><p>{detail}</p><i><em /></i>
+  </article>;
 }
 
 function AccountRow({ account, busy, onSync, onTest, onToggle, onReconnect, onDelete }) {

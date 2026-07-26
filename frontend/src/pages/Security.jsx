@@ -1,7 +1,19 @@
 import { useMemo, useState } from "react";
-import { Check, Circle } from "lucide-react";
+import {
+  Activity, Bell, Check, ChevronRight, Circle, KeyRound, LockKeyhole,
+  MonitorSmartphone, ShieldCheck, SlidersHorizontal, UserRoundCog,
+} from "lucide-react";
 import { api } from "../lib/api";
-import { InlineLoading, Notice, PageHeader } from "../components/ui";
+import { InlineLoading, Notice } from "../components/ui";
+
+const settingsSections = [
+  { label: "Contraseña", icon: LockKeyhole, active: true },
+  { label: "Sesiones activas", icon: MonitorSmartphone },
+  { label: "Autenticación 2FA", icon: ShieldCheck },
+  { label: "Notificaciones", icon: Bell },
+  { label: "Preferencias", icon: SlidersHorizontal },
+  { label: "Actividad reciente", icon: Activity },
+];
 
 export default function Security() {
   const [current, setCurrent] = useState("");
@@ -28,27 +40,63 @@ export default function Security() {
       await api.changePassword(current, next);
       setCurrent(""); setNext(""); setConfirmation("");
       setMessage({ tone: "success", text: "La contraseña se actualizó correctamente." });
-    } catch (error) { setMessage({ tone: "error", text: error.message }); } finally { setSaving(false); }
+    } catch (error) {
+      setMessage({ tone: "error", text: error.message });
+    } finally {
+      setSaving(false);
+    }
   };
 
-  return <div className="mx-auto max-w-4xl space-y-6 p-4 md:p-7">
-    <PageHeader eyebrow="Administración" title="Configuración" description="Seguridad y preferencias de acceso al panel." />
+  return <div className="security-page">
+    <header className="security-heading">
+      <span>ADMINISTRACIÓN</span>
+      <h1>Configuración</h1>
+      <p>Seguridad y preferencias de acceso al panel.</p>
+    </header>
     {message && <Notice tone={message.tone}>{message.text}</Notice>}
-    <div className="grid gap-6 md:grid-cols-[220px_minmax(0,1fr)]">
-      <nav aria-label="Secciones de configuración" className="text-sm"><span className="block border-l-2 border-brand-600 bg-white px-3 py-2 font-medium text-brand-700 dark:bg-slate-900 dark:text-brand-200">Contraseña</span></nav>
-      <form onSubmit={submit} className="panel p-5 md:p-6">
-        <h2 className="text-sm font-semibold text-slate-900 dark:text-white">Cambiar contraseña</h2>
-        <p className="mt-1 text-sm text-slate-500">Esta contraseña protege el acceso administrativo a Mail Control.</p>
-        <div className="mt-6 max-w-md space-y-4">
-          <Field label="Contraseña actual"><input className="input" type="password" autoComplete="current-password" required value={current} onChange={(event) => setCurrent(event.target.value)} /></Field>
-          <Field label="Nueva contraseña"><input className="input" type="password" autoComplete="new-password" required value={next} onChange={(event) => setNext(event.target.value)} /></Field>
-          <Field label="Confirmar nueva contraseña"><input className="input" type="password" autoComplete="new-password" required value={confirmation} onChange={(event) => setConfirmation(event.target.value)} /></Field>
-          <ul className="grid gap-1.5 pt-1 sm:grid-cols-2">{checks.map((check) => <li key={check.label} className={`flex items-center gap-2 text-xs ${check.ok ? "text-emerald-700 dark:text-emerald-300" : "text-slate-500"}`}>{check.ok ? <Check size={14} /> : <Circle size={12} />}{check.label}</li>)}</ul>
-          <button disabled={!valid || saving} className="btn-primary">{saving ? <InlineLoading label="Guardando" /> : "Guardar nueva contraseña"}</button>
-        </div>
-      </form>
+
+    <div className="security-layout">
+      <nav className="security-nav" aria-label="Secciones de configuración">
+        {settingsSections.map(({ label, icon: Icon, active }) =>
+          <button type="button" key={label} className={active ? "is-active" : ""} disabled={!active}>
+            <Icon size={15} /><span>{label}</span>{active && <ChevronRight size={14} />}
+          </button>
+        )}
+      </nav>
+
+      <section className="security-content">
+        <form onSubmit={submit} className="security-card">
+          <div className="security-card-heading">
+            <span><KeyRound size={17} /></span>
+            <div><h2>Cambiar contraseña</h2><p>Esta contraseña protege el acceso administrativo a Mail Control.</p></div>
+          </div>
+          <div className="security-form">
+            <Field label="Contraseña actual"><input className="input" type="password" autoComplete="current-password" required value={current} onChange={(event) => setCurrent(event.target.value)} placeholder="Ingresa tu contraseña actual" /></Field>
+            <Field label="Nueva contraseña"><input className="input" type="password" autoComplete="new-password" required value={next} onChange={(event) => setNext(event.target.value)} placeholder="Ingresa una contraseña segura" /></Field>
+            <Field label="Confirmar nueva contraseña"><input className="input" type="password" autoComplete="new-password" required value={confirmation} onChange={(event) => setConfirmation(event.target.value)} placeholder="Confirma la nueva contraseña" /></Field>
+            <ul className="security-checks">{checks.map((check) =>
+              <li key={check.label} className={check.ok ? "is-valid" : ""}>
+                {check.ok ? <Check size={12} /> : <Circle size={10} />}{check.label}
+              </li>
+            )}</ul>
+            <div className="security-submit-row">
+              <button disabled={!valid || saving} className="btn-primary">
+                <LockKeyhole size={14} />{saving ? <InlineLoading label="Actualizando" /> : "Actualizar contraseña"}
+              </button>
+            </div>
+          </div>
+        </form>
+
+        <aside className="security-advice">
+          <span><UserRoundCog size={18} /></span>
+          <div><strong>Protege tu cuenta</strong><p>Mantén una contraseña única y no la compartas con nadie.</p></div>
+          <small>Acceso administrativo</small>
+        </aside>
+      </section>
     </div>
   </div>;
 }
 
-function Field({ label, children }) { return <label className="block"><span className="label">{label}</span>{children}</label>; }
+function Field({ label, children }) {
+  return <label className="security-field"><span>{label}</span>{children}</label>;
+}

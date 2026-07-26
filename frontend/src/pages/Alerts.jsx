@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { CheckCircle2, RefreshCw, ShieldAlert } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Info, RefreshCw, ShieldAlert } from "lucide-react";
 import { api } from "../lib/api";
 import MessageView from "../components/MessageView";
 import { EmptyState, LoadingBlock, Notice, PageHeader, StatusBadge } from "../components/ui";
@@ -26,11 +26,20 @@ export default function Alerts() {
     } catch (err) { setError(err.message); }
   };
 
-  return <div className="flex min-h-full flex-col gap-5 p-4 md:p-7">
+  const critical = items.filter((item) => item.severity === "critical").length;
+  const warnings = items.length - critical;
+
+  return <div className="alerts-page flex min-h-full flex-col gap-5 p-4 md:p-7">
     <PageHeader eyebrow="Centro de incidencias" title="Alertas" description="Incidencias de pago, suspensión o autenticación que requieren revisión." actions={<button onClick={load} className="btn-secondary"><RefreshCw size={16} /> Actualizar</button>} />
     {error && <Notice tone="error">{error}</Notice>}
     {success && <Notice tone="success">{success}</Notice>}
-    <div className="panel flex min-h-[640px] flex-1 overflow-hidden">
+    <div className="alerts-kpis">
+      <AlertKpi tone="critical" icon={ShieldAlert} label="Críticas" value={critical} detail="Requieren atención inmediata" />
+      <AlertKpi tone="warning" icon={AlertTriangle} label="Advertencias" value={warnings} detail="Conviene revisar" />
+      <AlertKpi tone="info" icon={Info} label="Informativas" value={0} detail="Solo seguimiento" />
+      <AlertKpi tone="success" icon={CheckCircle2} label="Sistema" value={items.length ? "Activo" : "Al día"} detail="Supervisión en tiempo real" />
+    </div>
+    <div className="panel alerts-workspace flex min-h-[590px] flex-1 overflow-hidden">
       <section className="flex w-full flex-col border-r border-slate-200 dark:border-slate-800 md:w-[420px]">
         <div className="border-b border-slate-200 px-4 py-3 dark:border-slate-800"><h2 className="text-sm font-semibold text-slate-900 dark:text-white">Abiertas ({items.length})</h2></div>
         <div className="flex-1 overflow-auto">
@@ -45,4 +54,12 @@ export default function Alerts() {
       <section className={`absolute inset-0 z-20 flex-1 bg-white dark:bg-slate-900 md:static md:z-auto ${selected ? "block" : "hidden md:block"}`}><MessageView id={selected} onClose={() => setSelected(null)} /></section>
     </div>
   </div>;
+}
+
+function AlertKpi({ tone, icon: Icon, label, value, detail }) {
+  return <article className={`alert-kpi is-${tone}`}>
+    <span><Icon size={17} /></span>
+    <div><small>{label}</small><strong>{value}</strong><p>{detail}</p></div>
+    <i><em /></i>
+  </article>;
 }
