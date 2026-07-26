@@ -27,7 +27,7 @@ export default function MessageView({ id, onClose }) {
     <div className="flex h-full flex-col">
       <header className="border-b border-slate-200/80 p-5 dark:border-white/10">
         <div className="flex items-start gap-3">
-          <button onClick={onClose} className="btn-secondary px-2.5 md:hidden"><ArrowLeft size={18} /></button>
+          <button onClick={onClose} className="btn-secondary shrink-0 px-2.5" aria-label="Volver a la bandeja" title="Volver a la bandeja"><ArrowLeft size={18} /></button>
           <div className="min-w-0 flex-1">
             <h2 className="text-lg font-bold leading-6 text-slate-950 dark:text-white">{msg?.subject || "Sin asunto"}</h2>
             {msg && <div className="mt-4 flex items-start gap-3">
@@ -55,8 +55,15 @@ export default function MessageView({ id, onClose }) {
             <Tab active={tab === "text"} onClick={() => setTab("text")}>Texto</Tab>
           </div>
         </div>
-        <div className="flex-1 overflow-auto p-4 md:p-6">
-          {tab === "html" && msg.body_html ? <div className="mail-html-body mx-auto max-w-4xl border border-slate-200 bg-white p-5 text-sm text-black" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(msg.body_html, { USE_PROFILES: { html: true } }) }} /> : <pre className="mx-auto max-w-4xl whitespace-pre-wrap border border-slate-200 bg-slate-50 p-5 font-sans text-sm leading-6 text-slate-700 dark:border-slate-800 dark:bg-slate-950/50 dark:text-slate-300">{msg.body_text || "(sin contenido de texto)"}</pre>}
+        <div className="min-h-0 flex-1 overflow-auto bg-slate-50/70 p-2 dark:bg-slate-950/30 md:p-4">
+          {tab === "html" && msg.body_html
+            ? <iframe
+                className="mail-message-frame"
+                title={`Correo: ${msg.subject || "Sin asunto"}`}
+                sandbox="allow-popups allow-popups-to-escape-sandbox"
+                srcDoc={emailDocument(msg.body_html)}
+              />
+            : <pre className="mx-auto min-h-full max-w-4xl whitespace-pre-wrap border border-slate-200 bg-slate-50 p-5 font-sans text-sm leading-6 text-slate-700 dark:border-slate-800 dark:bg-slate-950/50 dark:text-slate-300">{msg.body_text || "(sin contenido de texto)"}</pre>}
         </div>
       </>}
     </div>
@@ -66,3 +73,35 @@ export default function MessageView({ id, onClose }) {
 function Tab({ active, children, ...props }) { return <button {...props} className={`rounded-md px-3 py-1.5 text-xs font-semibold ${active ? "bg-brand-50 text-brand-700 dark:bg-brand-950/40 dark:text-brand-200" : "text-slate-400 hover:text-slate-700 dark:hover:text-white"}`}>{children}</button>; }
 function ReadingSkeleton() { return <div className="space-y-5 p-6"><div className="skeleton h-6 w-3/4" /><div className="flex gap-3"><div className="skeleton h-10 w-10" /><div className="flex-1 space-y-2"><div className="skeleton h-3 w-1/3" /><div className="skeleton h-3 w-1/2" /></div></div><div className="space-y-3 pt-6">{[1,2,3,4,5].map((i) => <div key={i} className={`skeleton h-3 ${i % 2 ? "w-full" : "w-4/5"}`} />)}</div></div>; }
 function initials(value = "") { return value.split(/[\s@]+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("") || <UserRound size={17} />; }
+
+function emailDocument(html) {
+  const clean = DOMPurify.sanitize(html, {
+    USE_PROFILES: { html: true },
+    ADD_ATTR: ["target", "rel"],
+  });
+  return `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+      :root { color-scheme: light; }
+      * { box-sizing: border-box; }
+      html, body { width: 100%; max-width: 100%; min-height: 100%; margin: 0; overflow-x: auto; }
+      body { padding: clamp(12px, 3vw, 28px); background: #fff; color: #111827; font-family: Arial, Helvetica, sans-serif; }
+      img, video { max-width: 100% !important; height: auto !important; }
+      table { max-width: 100% !important; }
+      body > table { width: 100% !important; }
+      td, th { max-width: 100%; overflow-wrap: anywhere; }
+      pre { max-width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; }
+      a { overflow-wrap: anywhere; }
+      @media (max-width: 640px) {
+        body { padding: 12px; }
+        table[width] { width: 100% !important; }
+        td[width], th[width] { width: auto !important; }
+      }
+    </style>
+  </head>
+  <body>${clean}</body>
+</html>`;
+}

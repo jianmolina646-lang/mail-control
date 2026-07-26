@@ -60,7 +60,7 @@ export default function Subscriptions() {
 
   return (
     <div className="mx-auto max-w-7xl space-y-5 p-4 md:p-7">
-      <PageHeader title="Suscripciones" description="Estado consolidado de servicios detectados en tus cuentas de correo." actions={<button onClick={rebuild} disabled={rebuilding} className="btn-secondary"><RefreshCw size={16} className={rebuilding ? "animate-spin" : ""} /> Reclasificar correos</button>} />
+      <PageHeader eyebrow="Supervisión comercial" title="Suscripciones" description="Estado consolidado de servicios detectados en tus cuentas de correo." actions={<button onClick={rebuild} disabled={rebuilding} className="btn-secondary"><RefreshCw size={16} className={rebuilding ? "animate-spin" : ""} /> Reclasificar correos</button>} />
       {error && <Notice tone="error">{error}</Notice>}
       {notice && <Notice>{notice}</Notice>}
       <div className="grid border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900 sm:grid-cols-2 lg:grid-cols-5">

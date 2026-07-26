@@ -36,7 +36,7 @@ export default function Layout() {
   const [user, setUser] = useState(null);
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem("sidebar-collapsed") === "true");
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [dark, setDark] = useState(() => localStorage.getItem("theme") === "dark");
+  const [dark, setDark] = useState(() => localStorage.getItem("theme") !== "light");
   const currentPage = pageMeta[location.pathname] || { title: "Mail Control", section: "Workspace" };
 
   useEffect(() => {
@@ -107,6 +107,7 @@ export default function Layout() {
           <button aria-label="Abrir navegación" onClick={() => setMobileOpen(true)} className="app-icon-button lg:hidden"><Menu size={19} /></button>
           <div className="app-page-context"><span>{currentPage.section}</span><strong>{currentPage.title}</strong></div>
           <div className="app-topbar-actions">
+            <span className="app-live-status"><i /> Supervisión activa</span>
             <NavLink to="/alertas" aria-label="Ver alertas" className="app-icon-button app-notification"><Bell size={18} />{stats?.alerts_open > 0 && <span />}</NavLink>
             <span className="app-topbar-divider" />
             <button aria-label={dark ? "Usar tema claro" : "Usar tema oscuro"} onClick={() => setDark(!dark)} className="app-icon-button">{dark ? <Sun size={18} /> : <Moon size={18} />}</button>

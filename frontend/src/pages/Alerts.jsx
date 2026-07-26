@@ -27,7 +27,7 @@ export default function Alerts() {
   };
 
   return <div className="flex min-h-full flex-col gap-5 p-4 md:p-7">
-    <PageHeader title="Alertas" description="Incidencias de pago, suspensión o autenticación que requieren revisión." actions={<button onClick={load} className="btn-secondary"><RefreshCw size={16} /> Actualizar</button>} />
+    <PageHeader eyebrow="Centro de incidencias" title="Alertas" description="Incidencias de pago, suspensión o autenticación que requieren revisión." actions={<button onClick={load} className="btn-secondary"><RefreshCw size={16} /> Actualizar</button>} />
     {error && <Notice tone="error">{error}</Notice>}
     {success && <Notice tone="success">{success}</Notice>}
     <div className="panel flex min-h-[640px] flex-1 overflow-hidden">

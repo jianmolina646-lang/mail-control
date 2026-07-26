@@ -71,15 +71,15 @@ export default function Inbox() {
     </button>;
   };
 
-  return <div className="flex min-h-full flex-col gap-5 p-4 md:p-7">
-    <PageHeader title="Bandeja de entrada" description="Mensajes sincronizados de todas tus cuentas conectadas." />
+  return <div className="inbox-page flex min-h-full flex-col gap-5 p-4 md:p-7">
+    <PageHeader eyebrow="Centro de comunicaciones" title="Bandeja de entrada" description="Mensajes sincronizados de todas tus cuentas conectadas." />
     <div className="panel flex min-h-[640px] flex-1 overflow-hidden">
-      <aside className="hidden w-60 shrink-0 border-r border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-950/40 xl:block">
+      <aside className={`hidden w-60 shrink-0 border-r border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-950/40 ${selected ? "2xl:block" : "xl:block"}`}>
         <p className="px-4 pb-2 pt-4 text-[10px] font-semibold uppercase tracking-wider text-slate-400">Cuentas conectadas</p>
         <AccountOption active={!accountId} label="Todas las cuentas" detail={`${accounts.length} conectadas`} onClick={() => setAccountId("")} />
         {accounts.map((account) => <AccountOption key={account.id} active={accountId === String(account.id)} label={account.email} detail={`${account.provider} · ${account.last_status === "ok" ? "Conectada" : account.last_status === "error" ? "Con error" : "Pendiente"}`} onClick={() => setAccountId(String(account.id))} />)}
       </aside>
-      <section className="flex w-full min-w-0 flex-col border-r border-slate-200 dark:border-slate-800 md:w-[400px] lg:w-[460px]">
+      <section className={`flex w-full min-w-0 flex-col border-r border-slate-200 dark:border-slate-800 ${selected ? "md:w-[340px] lg:w-[380px]" : "md:w-[400px] lg:w-[460px]"}`}>
         <div className="space-y-3 border-b border-slate-200 p-4 dark:border-slate-800">
           <select value={accountId} onChange={(event) => setAccountId(event.target.value)} className="input xl:hidden"><option value="">Todas las cuentas</option>{accounts.map((account) => <option key={account.id} value={account.id}>{account.email}</option>)}</select>
           <div className="flex gap-2"><label className="relative min-w-0 flex-1"><span className="sr-only">Buscar correos</span><Search className="absolute left-3 top-3 text-slate-400" size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => event.key === "Enter" && reset(query)} className="input pl-9" placeholder="Buscar por remitente o asunto" /></label><button onClick={sync} disabled={syncing || !accounts.length} className="btn-secondary px-3" aria-label={`Sincronizar ${activeLabel}`}><RefreshCw size={16} className={syncing ? "animate-spin" : ""} /></button></div>

@@ -59,7 +59,7 @@ export default function Accounts() {
   const microsoft = ["outlook", "hotmail"].includes(form.provider);
 
   return <div className="mx-auto max-w-6xl space-y-6 p-4 md:p-7">
-    <PageHeader title="Cuentas conectadas" description="Conecta y supervisa las bandejas que Mail Control debe sincronizar." />
+    <PageHeader eyebrow="Infraestructura de correo" title="Cuentas conectadas" description="Conecta y supervisa las bandejas que Mail Control debe sincronizar." />
     {message && <Notice tone={message.tone}>{message.text}</Notice>}
     <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
       <section className="panel order-2 xl:order-1">

@@ -32,7 +32,7 @@ export default function Security() {
   };
 
   return <div className="mx-auto max-w-4xl space-y-6 p-4 md:p-7">
-    <PageHeader title="Configuración" description="Seguridad y preferencias de acceso al panel." />
+    <PageHeader eyebrow="Administración" title="Configuración" description="Seguridad y preferencias de acceso al panel." />
     {message && <Notice tone={message.tone}>{message.text}</Notice>}
     <div className="grid gap-6 md:grid-cols-[220px_minmax(0,1fr)]">
       <nav aria-label="Secciones de configuración" className="text-sm"><span className="block border-l-2 border-brand-600 bg-white px-3 py-2 font-medium text-brand-700 dark:bg-slate-900 dark:text-brand-200">Contraseña</span></nav>

@@ -4,7 +4,7 @@ import { EmptyState, PageHeader } from "../components/ui";
 export default function Templates() {
   return (
     <div className="mx-auto max-w-6xl space-y-6 p-4 md:p-7">
-      <PageHeader title="Plantillas de ventas" description="Contenido reutilizable para responder de forma consistente." />
+      <PageHeader eyebrow="Productividad" title="Plantillas de ventas" description="Contenido reutilizable para responder de forma consistente." />
       <section className="panel">
         <EmptyState
           icon={FileText}
