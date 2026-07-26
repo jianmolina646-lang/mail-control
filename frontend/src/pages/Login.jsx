@@ -1,24 +1,15 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  Activity,
-  AlertTriangle,
-  ArrowRight,
-  Check,
-  Eye,
-  EyeOff,
-  Inbox,
-  LockKeyhole,
-  Mail,
-  ShieldCheck,
-  Sparkles,
+  Activity, AlertTriangle, ArrowRight, BellRing, Eye, EyeOff,
+  LockKeyhole, Mail, ShieldCheck, Sparkles,
 } from "lucide-react";
 import { api } from "../lib/api";
 
-const signalItems = [
-  { icon: Inbox, label: "Bandeja unificada", meta: "Mensajes organizados", tone: "indigo" },
-  { icon: AlertTriangle, label: "Alertas críticas", meta: "Pagos bajo vigilancia", tone: "amber" },
-  { icon: Activity, label: "Sincronización", meta: "Cuentas supervisadas", tone: "emerald" },
+const benefits = [
+  { icon: ShieldCheck, title: "Supervisa", text: "Monitoriza todas tus cuentas de correo en tiempo real." },
+  { icon: BellRing, title: "Detecta", text: "Recibe alertas ante incidencias o pagos fallidos." },
+  { icon: Activity, title: "Actúa", text: "Toma acción inmediata antes de que se suspenda el servicio." },
 ];
 
 export default function Login() {
@@ -33,7 +24,6 @@ export default function Login() {
     event.preventDefault();
     setError("");
     setLoading(true);
-
     try {
       await api.login(email.trim(), password);
       navigate("/");
@@ -44,136 +34,59 @@ export default function Login() {
     }
   };
 
-  return (
-    <main className="login-shell">
-      <section className="login-story" aria-label="Mail Control">
-        <div className="login-grid" aria-hidden="true" />
-        <div className="login-glow login-glow-one" aria-hidden="true" />
-        <div className="login-glow login-glow-two" aria-hidden="true" />
+  return <main className="login-reference">
+    <div className="login-reference-grid" aria-hidden="true" />
+    <header className="login-reference-header">
+      <div className="login-reference-brand">
+        <span><Mail size={17} /></span>
+        <div><strong>Mail Control</strong><small>Centro operativo</small></div>
+      </div>
+      <div className="login-reference-status"><i /> Estado de los servicios</div>
+    </header>
 
-        <header className="login-brand">
-          <span className="login-brand-mark"><Mail size={18} strokeWidth={2.2} /></span>
-          <span>Mail Control</span>
-          <span className="login-brand-divider" aria-hidden="true" />
-          <span className="login-brand-caption">Centro operativo</span>
-        </header>
-
-        <div className="login-story-copy">
-          <div className="login-eyebrow"><Sparkles size={14} /> Inteligencia para tu operación</div>
-          <h1>Tu correo deja de ser ruido.<br /><span>Se convierte en control.</span></h1>
-          <p>
-            Supervisa cuentas, detecta incidencias de suscripción y actúa antes de que un pago interrumpa el servicio.
-          </p>
+    <section className="login-reference-main">
+      <div className="login-reference-story">
+        <div className="login-reference-copy">
+          <span className="login-reference-eyebrow"><Sparkles size={12} /> Inteligencia para tu operación</span>
+          <h1>Tu correo deja<br />de ser ruido.<br /><em>Se convierte en<br />control.</em></h1>
+          <p>Supervisa cuentas, detecta incidencias de suscripción y actúa antes de que un pago interrumpa el servicio.</p>
         </div>
 
-        <div className="signal-stage" aria-label="Vista conceptual de la actividad operativa">
-          <div className="signal-orbit signal-orbit-one" aria-hidden="true" />
-          <div className="signal-orbit signal-orbit-two" aria-hidden="true" />
-          <div className="signal-core">
-            <span className="signal-core-pulse" aria-hidden="true" />
-            <Mail size={23} />
-          </div>
-          <span className="signal-path signal-path-a" aria-hidden="true" />
-          <span className="signal-path signal-path-b" aria-hidden="true" />
-          <span className="signal-path signal-path-c" aria-hidden="true" />
-
-          <div className="signal-stack">
-            {signalItems.map(({ icon: Icon, label, meta, tone }, index) => (
-              <div className="signal-item" style={{ "--signal-delay": `${index * 120}ms` }} key={label}>
-                <span className={`signal-icon signal-${tone}`}><Icon size={16} /></span>
-                <span><strong>{label}</strong><small>{meta}</small></span>
-                <span className={`signal-status signal-${tone}`}><Check size={11} /> Activo</span>
-              </div>
-            ))}
-          </div>
+        <div className="login-envelope-scene" aria-hidden="true">
+          <span className="login-orbit orbit-one" />
+          <span className="login-orbit orbit-two" />
+          <div className="login-envelope-back" />
+          <div className="login-envelope"><Mail size={34} /></div>
+          <span className="login-data-card card-one"><BellRing size={14} /></span>
+          <span className="login-data-card card-two"><ShieldCheck size={14} /></span>
         </div>
 
-        <footer className="login-story-footer">
-          <span><ShieldCheck size={15} /> Acceso privado y cifrado</span>
-          <span className="login-live"><i aria-hidden="true" /> Sistema operativo</span>
-        </footer>
-      </section>
-
-      <section className="login-access">
-        <div className="login-mobile-brand">
-          <span className="login-brand-mark"><Mail size={18} /></span>
-          <strong>Mail Control</strong>
+        <div className="login-benefits">
+          {benefits.map(({ icon: Icon, title, text }) => <article key={title}>
+            <span><Icon size={16} /></span><h2>{title}</h2><p>{text}</p><i><ArrowRight size={12} /></i>
+          </article>)}
         </div>
+      </div>
 
-        <div className="login-form-wrap">
-          <div className="login-form-heading">
-            <span className="login-step">ACCESO SEGURO</span>
-            <h2>Bienvenido de nuevo</h2>
-            <p>Ingresa a tu espacio de trabajo para continuar.</p>
-          </div>
+      <aside className="login-reference-access">
+        <div className="login-access-card">
+          <span className="login-access-icon"><Mail size={24} /></span>
+          <span className="login-access-kicker">ACCESO SEGURO</span>
+          <h2>Bienvenido de nuevo</h2>
+          <p>Ingresa a tu espacio de trabajo para continuar.</p>
 
-          <form onSubmit={submit} className="login-form">
-            <label className="login-field">
-              <span>Correo electrónico</span>
-              <span className="login-input-wrap">
-                <Mail aria-hidden="true" size={18} />
-                <input
-                  type="email"
-                  inputMode="email"
-                  autoComplete="username"
-                  placeholder="nombre@empresa.com"
-                  required
-                  aria-invalid={Boolean(error)}
-                  value={email}
-                  onChange={(event) => {
-                    setEmail(event.target.value);
-                    if (error) setError("");
-                  }}
-                />
-              </span>
-            </label>
-
-            <label className="login-field">
-              <span>Contraseña</span>
-              <span className="login-input-wrap">
-                <LockKeyhole aria-hidden="true" size={18} />
-                <input
-                  type={showPassword ? "text" : "password"}
-                  autoComplete="current-password"
-                  placeholder="Ingresa tu contraseña"
-                  required
-                  aria-invalid={Boolean(error)}
-                  value={password}
-                  onChange={(event) => {
-                    setPassword(event.target.value);
-                    if (error) setError("");
-                  }}
-                />
-                <button
-                  className="login-password-toggle"
-                  type="button"
-                  onClick={() => setShowPassword((visible) => !visible)}
-                  aria-label={showPassword ? "Ocultar contraseña" : "Mostrar contraseña"}
-                  aria-pressed={showPassword}
-                >
-                  {showPassword ? <EyeOff size={17} /> : <Eye size={17} />}
-                </button>
-              </span>
-            </label>
-
-            <div className={`login-message ${error ? "is-visible" : ""}`} role="alert" aria-live="polite">
-              {error && <><AlertTriangle size={16} /><span>{error}</span></>}
-            </div>
-
-            <button disabled={loading || !email.trim() || !password} className="login-submit">
-              <span>{loading ? "Verificando acceso" : "Entrar a Mail Control"}</span>
-              {loading ? <span className="login-spinner" aria-hidden="true" /> : <ArrowRight size={18} />}
-            </button>
+          <form onSubmit={submit} className="login-reference-form">
+            <label><span>Correo electrónico</span><div><Mail size={15} /><input type="email" inputMode="email" autoComplete="username" required aria-invalid={Boolean(error)} value={email} onChange={(event) => { setEmail(event.target.value); if (error) setError(""); }} placeholder="nombre@empresa.com" /></div></label>
+            <label><span>Contraseña</span><div><LockKeyhole size={15} /><input type={showPassword ? "text" : "password"} autoComplete="current-password" required aria-invalid={Boolean(error)} value={password} onChange={(event) => { setPassword(event.target.value); if (error) setError(""); }} placeholder="Ingresa tu contraseña" /><button type="button" onClick={() => setShowPassword((value) => !value)} aria-label={showPassword ? "Ocultar contraseña" : "Mostrar contraseña"}>{showPassword ? <EyeOff size={15} /> : <Eye size={15} />}</button></div></label>
+            <div className={`login-reference-error ${error ? "is-visible" : ""}`} role="alert">{error && <><AlertTriangle size={14} /> {error}</>}</div>
+            <button className="login-reference-submit" disabled={loading || !email.trim() || !password}><span>{loading ? "Verificando acceso" : "Entrar a Mail Control"}</span>{loading ? <i /> : <ArrowRight size={15} />}</button>
           </form>
 
-          <div className="login-trust">
-            <ShieldCheck size={15} />
-            <span>Tus credenciales viajan por una conexión segura.</span>
-          </div>
+          <div className="login-reference-trust"><ShieldCheck size={13} /> Tus datos están protegidos y cifrados</div>
         </div>
+      </aside>
+    </section>
 
-        <p className="login-copyright">© {new Date().getFullYear()} Mail Control · Operación de correo centralizada</p>
-      </section>
-    </main>
-  );
+    <footer className="login-reference-footer"><span><LockKeyhole size={12} /> Sistema seguro y cifrado</span><span>Todos los derechos reservados</span></footer>
+  </main>;
 }
