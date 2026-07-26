@@ -1,18 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle, Ban, CheckCircle2, ChevronRight, Clock3, CreditCard,
-  History, RefreshCw, ShieldX, X,
+  History, MoreHorizontal, RefreshCw, Search, ShieldX, SlidersHorizontal, X,
 } from "lucide-react";
 import MessageView from "../components/MessageView";
 import { api } from "../lib/api";
-import { EmptyState, Notice, PageHeader } from "../components/ui";
+import { EmptyState, Notice } from "../components/ui";
 
 const STATUS = {
-  active: { label: "Activa", icon: CheckCircle2, badge: "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300" },
-  warning: { label: "Actualizar", icon: AlertTriangle, badge: "bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300" },
-  payment_failed: { label: "Pago rechazado", icon: CreditCard, badge: "bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300" },
-  suspended: { label: "Suspendida", icon: ShieldX, badge: "bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-300" },
-  cancelled: { label: "Cancelada", icon: Ban, badge: "bg-slate-200 text-slate-700 dark:bg-white/10 dark:text-slate-300" },
+  active: { label: "Activa", icon: CheckCircle2, color: "#22c55e", className: "is-active" },
+  warning: { label: "Por renovar", icon: AlertTriangle, color: "#f59e0b", className: "is-warning" },
+  payment_failed: { label: "Pago rechazado", icon: CreditCard, color: "#ef4444", className: "is-danger" },
+  suspended: { label: "Suspendida", icon: ShieldX, color: "#6366f1", className: "is-suspended" },
+  cancelled: { label: "Cancelada", icon: Ban, color: "#64748b", className: "is-neutral" },
 };
 
 export default function Subscriptions() {
@@ -21,6 +21,7 @@ export default function Subscriptions() {
   const [accounts, setAccounts] = useState([]);
   const [accountId, setAccountId] = useState("");
   const [status, setStatus] = useState("");
+  const [query, setQuery] = useState("");
   const [selected, setSelected] = useState(null);
   const [messageId, setMessageId] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -42,7 +43,18 @@ export default function Subscriptions() {
   };
   useEffect(() => { load(); }, [accountId, status]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const services = useMemo(() => new Set(items.map((item) => item.service)).size, [items]);
+  const serviceCounts = useMemo(() => {
+    const counts = new Map();
+    items.forEach((item) => counts.set(item.service, (counts.get(item.service) || 0) + 1));
+    return [...counts.entries()].sort((a, b) => b[1] - a[1]);
+  }, [items]);
+  const services = serviceCounts.length;
+  const filtered = useMemo(() => {
+    const normalized = query.trim().toLowerCase();
+    if (!normalized) return items;
+    return items.filter((item) => `${item.service} ${item.account_email} ${item.reason || ""}`.toLowerCase().includes(normalized));
+  }, [items, query]);
+  const totalStates = Math.max(1, (stats?.active || 0) + (stats?.warning || 0) + (stats?.payment_failed || 0) + (stats?.suspended || 0));
 
   const rebuild = async () => {
     setRebuilding(true); setNotice("");
@@ -50,62 +62,136 @@ export default function Subscriptions() {
       await api.rebuildSubscriptions();
       setNotice("Reclasificación iniciada. Los estados aparecerán en unos momentos.");
       window.setTimeout(load, 5000);
-    } catch (error) { setNotice(error.message); }
-    finally { setRebuilding(false); }
+    } catch (err) { setNotice(err.message); } finally { setRebuilding(false); }
   };
+  const openHistory = async (id) => setSelected(await api.subscription(id));
 
-  const openHistory = async (id) => {
-    setSelected(await api.subscription(id));
-  };
+  const metrics = [
+    { label: "Servicios detectados", value: services, icon: CreditCard, tone: "violet", detail: `${items.length} estados registrados` },
+    { label: "Servicios activos", value: stats?.active ?? "—", icon: CheckCircle2, tone: "green", detail: `${Math.round(((stats?.active || 0) / totalStates) * 100)}% del total` },
+    { label: "Por renovar", value: stats?.warning ?? "—", icon: AlertTriangle, tone: "amber", detail: "Requieren atención" },
+    { label: "Pago rechazado", value: stats?.payment_failed ?? "—", icon: CreditCard, tone: "red", detail: "Incidencias detectadas" },
+    { label: "Suspendidas", value: stats?.suspended ?? "—", icon: ShieldX, tone: "blue", detail: "Sin servicio activo" },
+  ];
 
   return (
-    <div className="mx-auto max-w-7xl space-y-5 p-4 md:p-7">
-      <PageHeader eyebrow="Supervisión comercial" title="Suscripciones" description="Estado consolidado de servicios detectados en tus cuentas de correo." actions={<button onClick={rebuild} disabled={rebuilding} className="btn-secondary"><RefreshCw size={16} className={rebuilding ? "animate-spin" : ""} /> Reclasificar correos</button>} />
+    <div className="subscriptions-page">
+      <header className="subscriptions-hero">
+        <div>
+          <span>SUPERVISIÓN COMERCIAL</span>
+          <h1>Gestión de suscripciones</h1>
+          <p>Administra y supervisa todos los servicios detectados en tus cuentas de correo.</p>
+        </div>
+        <button onClick={rebuild} disabled={rebuilding} className="subscriptions-primary">
+          <RefreshCw size={15} className={rebuilding ? "animate-spin" : ""} />
+          {rebuilding ? "Reclasificando…" : "Reclasificar correos"}
+        </button>
+      </header>
+
       {error && <Notice tone="error">{error}</Notice>}
       {notice && <Notice>{notice}</Notice>}
-      <div className="grid border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900 sm:grid-cols-2 lg:grid-cols-5">
-        <Metric label="Servicios detectados" value={services} icon={CreditCard} tone="brand" />
-        <Metric label="Activas" value={stats?.active ?? "—"} icon={CheckCircle2} tone="emerald" />
-        <Metric label="Actualizar pago" value={stats?.warning ?? "—"} icon={AlertTriangle} tone="amber" />
-        <Metric label="Pagos rechazados" value={stats?.payment_failed ?? "—"} icon={CreditCard} tone="rose" />
-        <Metric label="Suspendidas" value={stats?.suspended ?? "—"} icon={ShieldX} tone="red" />
+
+      <section className="subscription-metrics">
+        {metrics.map((metric) => <Metric key={metric.label} {...metric} />)}
+      </section>
+
+      <div className="subscriptions-layout">
+        <section className="subscriptions-main">
+          <div className="subscription-filters">
+            <label className="subscription-search">
+              <Search size={15} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar por servicio, cuenta o motivo…" />
+            </label>
+            <select value={accountId} onChange={(e) => setAccountId(e.target.value)}>
+              <option value="">Todas las cuentas</option>
+              {accounts.map((account) => <option key={account.id} value={account.id}>{account.email}</option>)}
+            </select>
+            <select value={status} onChange={(e) => setStatus(e.target.value)}>
+              <option value="">Todos los estados</option>
+              {Object.entries(STATUS).map(([value, item]) => <option key={value} value={value}>{item.label}</option>)}
+            </select>
+            <span className="subscription-filter-count"><SlidersHorizontal size={14} />{filtered.length}</span>
+          </div>
+
+          <div className="subscription-table-card">
+            <div className="subscription-table-title"><div><strong>Servicios y suscripciones ({filtered.length})</strong><span>Último estado detectado por cuenta y servicio.</span></div></div>
+            <div className="subscription-table-wrap">
+              <table>
+                <thead><tr><th>Servicio</th><th>Cuenta</th><th>Estado</th><th>Motivo</th><th>Última actividad</th><th>Acciones</th></tr></thead>
+                <tbody>
+                  {loading ? <TableSkeleton /> : filtered.length === 0 ? (
+                    <tr><td colSpan="6"><EmptyState icon={CreditCard} title="No hay estados detectados" description="Reclasifica los correos para construir el estado de cada suscripción." /></td></tr>
+                  ) : filtered.map((item) => {
+                    const info = STATUS[item.status] || STATUS.cancelled;
+                    return (
+                      <tr key={item.id}>
+                        <td><div className="subscription-service"><ServiceMark name={item.service} /><strong>{item.service}</strong></div></td>
+                        <td><span className="subscription-email">{item.account_email}</span></td>
+                        <td><StatusPill info={info} /></td>
+                        <td><span className="subscription-reason">{item.reason || "Sin novedad"}</span></td>
+                        <td><time>{new Date(item.updated_at).toLocaleString()}</time></td>
+                        <td><button onClick={() => openHistory(item.id)} className="subscription-more" title="Ver historial"><MoreHorizontal size={16} /></button></td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <aside className="subscriptions-summary">
+          <SummaryDonut stats={stats} total={totalStates} />
+          <div className="summary-card">
+            <h3>Servicios más detectados</h3>
+            <div className="summary-services">
+              {serviceCounts.slice(0, 5).map(([name, count], index) => (
+                <div key={name}><span><ServiceMark name={name} />{name}</span><b>{count}</b><i><em style={{ width: `${(count / Math.max(1, serviceCounts[0]?.[1])) * 100}%` }} /></i></div>
+              ))}
+              {!serviceCounts.length && <p>Sin servicios detectados todavía.</p>}
+            </div>
+          </div>
+          <div className="summary-card">
+            <h3>Acciones rápidas</h3>
+            <button onClick={rebuild} disabled={rebuilding}><RefreshCw size={14} />Sincronizar estados</button>
+            <button onClick={() => setStatus("warning")}><AlertTriangle size={14} />Ver por renovar</button>
+            <button onClick={() => setStatus("suspended")}><ShieldX size={14} />Ver suspendidas</button>
+          </div>
+        </aside>
       </div>
 
-      <section className="card overflow-hidden">
-        <div className="flex flex-col gap-3 border-b border-slate-200/80 p-4 dark:border-white/10 lg:flex-row lg:items-center">
-          <div className="mr-auto"><h2 className="font-bold text-slate-900 dark:text-white">Monitor de suscripciones</h2><p className="text-xs text-slate-500">Último estado detectado para cada cuenta y servicio.</p></div>
-          <select className="input lg:w-64" value={accountId} onChange={(e) => setAccountId(e.target.value)}><option value="">Todas las cuentas</option>{accounts.map((account) => <option key={account.id} value={account.id}>{account.email}</option>)}</select>
-          <select className="input lg:w-48" value={status} onChange={(e) => setStatus(e.target.value)}><option value="">Todos los estados</option>{Object.entries(STATUS).map(([value, item]) => <option key={value} value={value}>{item.label}</option>)}</select>
-        </div>
-        <div className="hidden overflow-x-auto md:block">
-          <table className="w-full text-left">
-            <thead className="bg-slate-50/80 text-[10px] uppercase tracking-wider text-slate-400 dark:bg-slate-950/30"><tr><th className="px-5 py-3">Cuenta</th><th className="px-5 py-3">Servicio</th><th className="px-5 py-3">Estado</th><th className="px-5 py-3">Motivo</th><th className="px-5 py-3">Última detección</th><th className="px-5 py-3" /></tr></thead>
-            <tbody className="divide-y divide-slate-100 dark:divide-white/5">
-              {loading ? <TableSkeleton /> : items.length === 0 ? <tr><td colSpan="6" className="px-5 py-16 text-center"><CreditCard className="mx-auto mb-3 text-slate-300" size={30} /><strong className="block text-slate-700 dark:text-white">Aún no hay estados detectados</strong><span className="text-xs text-slate-500">Pulsa “Reclasificar” para analizar los correos existentes.</span></td></tr> :
-              items.map((item) => {
-                const info = STATUS[item.status] || STATUS.cancelled; const Icon = info.icon;
-                return <tr key={item.id} className="hover:bg-slate-50/70 dark:hover:bg-white/[.03]"><td className="px-5 py-4 text-sm text-slate-600 dark:text-slate-300">{item.account_email}</td><td className="px-5 py-4 font-semibold text-slate-900 dark:text-white">{item.service}</td><td className="px-5 py-4"><span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${info.badge}`}><Icon size={13} />{info.label}</span></td><td className="px-5 py-4 text-sm text-slate-500">{item.reason || "Sin novedad"}</td><td className="px-5 py-4 text-xs text-slate-500">{new Date(item.updated_at).toLocaleString()}</td><td className="px-5 py-4"><button onClick={() => openHistory(item.id)} className="btn-secondary px-2.5" title="Ver historial"><History size={16} /></button></td></tr>;
-              })}
-            </tbody>
-          </table>
-        </div>
-        <div className="divide-y divide-slate-100 dark:divide-slate-800 md:hidden">
-          {loading ? <div className="p-5"><div className="skeleton h-16 w-full" /></div> : items.length === 0 ? <EmptyState icon={CreditCard} title="No hay estados detectados" description="Reclasifica los correos para construir el estado de cada suscripción." /> : items.map((item) => { const info = STATUS[item.status] || STATUS.cancelled; const Icon = info.icon; return <button key={item.id} onClick={() => openHistory(item.id)} className="w-full p-4 text-left hover:bg-slate-50 dark:hover:bg-slate-800/50"><span className="flex items-center gap-2"><strong className="text-sm text-slate-900 dark:text-white">{item.service}</strong><span className={`ml-auto inline-flex items-center gap-1 rounded border px-2 py-0.5 text-xs ${info.badge}`}><Icon size={12} />{info.label}</span></span><span className="mt-1 block truncate text-xs text-slate-500">{item.account_email}</span><span className="mt-2 block text-xs text-slate-600 dark:text-slate-300">{item.reason || "Sin novedad"}</span></button>; })}
-        </div>
-      </section>
       {selected && <HistoryPanel item={selected} onClose={() => setSelected(null)} onMessage={setMessageId} />}
       {messageId && <div className="fixed inset-0 z-[60] bg-slate-950/50 p-3 md:p-8"><div className="mx-auto h-full max-w-5xl overflow-hidden border border-slate-200 bg-white shadow-xl dark:border-slate-800 dark:bg-slate-900"><MessageView id={messageId} onClose={() => setMessageId(null)} /></div></div>}
     </div>
   );
 }
 
-function Metric({ label, value, icon: Icon, tone }) {
-  const critical = ["rose", "red"].includes(tone) && Number(value) > 0;
-  return <div className="border-b border-slate-200 p-4 last:border-b-0 dark:border-slate-800 sm:border-b-0 sm:border-r sm:last:border-r-0"><span className="flex items-center gap-1.5 text-xs font-medium text-slate-500"><Icon size={14} />{label}</span><strong className={`mt-1 block text-xl font-semibold tabular-nums ${critical ? "text-rose-700 dark:text-rose-400" : "text-slate-950 dark:text-white"}`}>{value}</strong></div>;
+function Metric({ label, value, icon: Icon, tone, detail }) {
+  const bars = [28, 44, 34, 58, 43, 67, 53, 74, 61, 81];
+  return <article className={`subscription-metric tone-${tone}`}><div><span><Icon size={15} /></span><small>{label}</small></div><strong>{value}</strong><p>{detail}</p><div className="subscription-spark">{bars.map((height, index) => <i key={index} style={{ height: `${height}%` }} />)}</div></article>;
+}
+
+function ServiceMark({ name }) {
+  return <span className="subscription-service-mark">{(name || "?").slice(0, 1).toUpperCase()}</span>;
+}
+
+function StatusPill({ info }) {
+  const Icon = info.icon;
+  return <span className={`subscription-status ${info.className}`}><Icon size={11} />{info.label}</span>;
+}
+
+function SummaryDonut({ stats, total }) {
+  const active = Math.round(((stats?.active || 0) / total) * 100);
+  const warning = Math.round(((stats?.warning || 0) / total) * 100);
+  const failed = Math.round(((stats?.payment_failed || 0) / total) * 100);
+  const suspended = Math.max(0, 100 - active - warning - failed);
+  const gradient = `conic-gradient(#22c55e 0 ${active}%, #f59e0b ${active}% ${active + warning}%, #ef4444 ${active + warning}% ${active + warning + failed}%, #6366f1 ${active + warning + failed}% ${active + warning + failed + suspended}%)`;
+  return <div className="summary-card"><h3>Resumen de suscripciones</h3><div className="summary-donut"><div style={{ background: gradient }}><span><b>{total === 1 && !stats ? "—" : total}</b><small>Total</small></span></div><ul>{[["Activas", stats?.active || 0, "#22c55e"],["Por renovar", stats?.warning || 0, "#f59e0b"],["Rechazadas", stats?.payment_failed || 0, "#ef4444"],["Suspendidas", stats?.suspended || 0, "#6366f1"]].map(([label,value,color])=><li key={label}><i style={{background:color}} />{label}<b>{value}</b></li>)}</ul></div></div>;
 }
 
 function HistoryPanel({ item, onClose, onMessage }) {
-  return <div className="fixed inset-0 z-50 flex justify-end bg-slate-950/40 backdrop-blur-sm" onMouseDown={onClose}><aside onMouseDown={(e) => e.stopPropagation()} className="h-full w-full max-w-lg animate-fade-in overflow-y-auto bg-white p-6 shadow-2xl dark:bg-slate-900"><div className="flex items-start"><div><p className="text-sm font-semibold text-brand-600">{item.service}</p><h2 className="text-xl font-bold text-slate-950 dark:text-white">{item.account_email}</h2></div><button onClick={onClose} className="btn-secondary ml-auto px-2.5"><X size={18} /></button></div><div className="mt-8"><h3 className="mb-4 flex items-center gap-2 text-sm font-bold text-slate-800 dark:text-white"><History size={17} /> Historial de estados</h3><div className="space-y-1">{item.events.map((event, index) => { const info = STATUS[event.status] || STATUS.cancelled; const Icon = info.icon; return <div key={event.id} className="relative flex gap-3 pb-6"><div className={`z-10 flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${info.badge}`}><Icon size={15} /></div>{index < item.events.length - 1 && <div className="absolute left-[17px] top-9 h-full w-px bg-slate-200 dark:bg-white/10" />}<div className="min-w-0 flex-1"><strong className="text-sm text-slate-800 dark:text-white">{info.label}</strong><p className="text-xs text-slate-500">{event.reason}</p><time className="mt-1 flex items-center gap-1 text-[11px] text-slate-400"><Clock3 size={12} />{new Date(event.detected_at).toLocaleString()}</time>{event.message_id && <button onClick={() => onMessage(event.message_id)} className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-brand-600">Abrir correo <ChevronRight size={13} /></button>}</div></div>; })}</div></div></aside></div>;
+  return <div className="fixed inset-0 z-50 flex justify-end bg-slate-950/40 backdrop-blur-sm" onMouseDown={onClose}><aside onMouseDown={(e) => e.stopPropagation()} className="h-full w-full max-w-lg animate-fade-in overflow-y-auto bg-white p-6 shadow-2xl dark:bg-slate-900"><div className="flex items-start"><div><p className="text-sm font-semibold text-brand-600">{item.service}</p><h2 className="text-xl font-bold text-slate-950 dark:text-white">{item.account_email}</h2></div><button onClick={onClose} className="btn-secondary ml-auto px-2.5"><X size={18} /></button></div><div className="mt-8"><h3 className="mb-4 flex items-center gap-2 text-sm font-bold text-slate-800 dark:text-white"><History size={17} /> Historial de estados</h3><div className="space-y-1">{item.events.map((event, index) => { const info = STATUS[event.status] || STATUS.cancelled; const Icon = info.icon; return <div key={event.id} className="relative flex gap-3 pb-6"><div className={`z-10 flex h-9 w-9 shrink-0 items-center justify-center rounded-full subscription-status ${info.className}`}><Icon size={15} /></div>{index < item.events.length - 1 && <div className="absolute left-[17px] top-9 h-full w-px bg-slate-200 dark:bg-white/10" />}<div className="min-w-0 flex-1"><strong className="text-sm text-slate-800 dark:text-white">{info.label}</strong><p className="text-xs text-slate-500">{event.reason}</p><time className="mt-1 flex items-center gap-1 text-[11px] text-slate-400"><Clock3 size={12} />{new Date(event.detected_at).toLocaleString()}</time>{event.message_id && <button onClick={() => onMessage(event.message_id)} className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-brand-600">Abrir correo <ChevronRight size={13} /></button>}</div></div>; })}</div></div></aside></div>;
 }
 
-function TableSkeleton() { return <>{[1,2,3,4].map((row) => <tr key={row}>{[1,2,3,4,5,6].map((cell) => <td key={cell} className="px-5 py-5"><div className="skeleton h-3 w-full" /></td>)}</tr>)}</>; }
+function TableSkeleton() {
+  return <>{[1,2,3,4,5].map((row) => <tr key={row}>{[1,2,3,4,5,6].map((cell) => <td key={cell}><div className="skeleton h-3 w-full" /></td>)}</tr>)}</>;
+}
