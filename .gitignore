@@ -1,4 +1,6 @@
 .env
+.env.save
+.env.backup-*
 __pycache__/
 *.pyc
 .venv/
