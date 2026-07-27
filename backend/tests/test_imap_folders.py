@@ -1,3 +1,5 @@
+import unittest
+
 from app.services.imap_service import _received_folders
 
 
@@ -14,5 +16,6 @@ class FakeServer:
         ]
 
 
-def test_received_folders_excludes_duplicate_and_system_mailboxes():
-    assert _received_folders(FakeServer()) == ["Streaming"]
+class ReceivedFoldersTests(unittest.TestCase):
+    def test_excludes_duplicate_and_system_mailboxes(self):
+        self.assertEqual(_received_folders(FakeServer()), ["Streaming"])
