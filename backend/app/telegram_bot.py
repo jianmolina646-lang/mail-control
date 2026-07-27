@@ -46,9 +46,15 @@ def _api(method: str, payload: dict[str, object] | None = None, timeout: int = 4
 def _menu() -> dict:
     return {
         "keyboard": [
-            [{"text": "📊 Resumen"}, {"text": "🚨 Alertas"}],
-            [{"text": "📬 Cuentas"}, {"text": "🧾 Auditoría"}],
-            [{"text": "❓ Ayuda"}],
+            [
+                {"text": "📊 Resumen", "style": "primary"},
+                {"text": "🚨 Alertas", "style": "danger"},
+            ],
+            [
+                {"text": "📬 Cuentas", "style": "primary"},
+                {"text": "🧾 Auditoría", "style": "success"},
+            ],
+            [{"text": "❓ Ayuda", "style": "primary"}],
         ],
         "resize_keyboard": True,
         "is_persistent": True,
@@ -82,15 +88,16 @@ def _audit(action: str, detail: str = "") -> None:
 
 def _help() -> str:
     return (
-        "🤖 <b>MAIL CONTROL</b>\n\n"
+        "💠 <b>MAIL CONTROL · CENTRO OPERATIVO</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "<b>Comandos disponibles</b>\n\n"
         "/resumen — estado general\n"
         "/alertas — incidencias con filtros y resolución\n"
         "/cuentas — estado y sincronización inmediata\n"
         "/buscar correo@dominio.com — últimos mensajes\n"
         "/codigo correo@dominio.com — código reciente confiable\n"
         "/auditoria — últimas operaciones del bot\n\n"
-        "Las acciones administrativas requieren confirmación y solo funcionan "
-        "desde la cuenta autorizada."
+        "🛡 <i>Acceso privado · acciones protegidas con confirmación</i>"
     )
 
 
@@ -109,20 +116,23 @@ def _summary() -> tuple[str, dict]:
         ) or 0
         subscriptions = db.scalar(select(func.count(Subscription.id))) or 0
         text = (
-            "📊 <b>RESUMEN DE MAIL CONTROL</b>\n\n"
-            f"📬 Cuentas: <b>{accounts}</b>\n"
-            f"✅ Conectadas: <b>{connected}</b>\n"
-            f"⚠️ Con error: <b>{errors}</b>\n"
-            f"🚨 Alertas pendientes: <b>{open_alerts}</b>\n"
-            f"📺 Servicios detectados: <b>{subscriptions}</b>"
+            "💠 <b>MAIL CONTROL</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "📊 <b>RESUMEN OPERATIVO</b>\n\n"
+            f"📬 <b>{accounts}</b>  cuentas supervisadas\n"
+            f"🟢 <b>{connected}</b>  conectadas\n"
+            f"🟠 <b>{errors}</b>  requieren revisión\n"
+            f"🔴 <b>{open_alerts}</b>  alertas pendientes\n"
+            f"📺 <b>{subscriptions}</b>  servicios detectados\n\n"
+            "🛡 <i>Supervisión automática activa</i>"
         )
         markup = {
             "inline_keyboard": [
                 [
-                    {"text": "🚨 Ver alertas", "callback_data": "alerts:0:all"},
-                    {"text": "📬 Ver cuentas", "callback_data": "accounts:0"},
+                    {"text": "🚨 Ver alertas", "callback_data": "alerts:0:all", "style": "danger"},
+                    {"text": "📬 Ver cuentas", "callback_data": "accounts:0", "style": "primary"},
                 ],
-                [{"text": "🔄 Sincronizar todas", "callback_data": "syncall:ask"}],
+                [{"text": "🔄 Sincronizar todas", "callback_data": "syncall:ask", "style": "success"}],
             ]
         }
         return text, markup
@@ -148,7 +158,7 @@ def _alerts(page: int = 0, service: str = "all") -> tuple[str, dict]:
             .limit(_PAGE_SIZE)
             .all()
         )
-        title = "🚨 <b>ALERTAS PENDIENTES</b>"
+        title = "🔴 <b>CENTRO DE ALERTAS</b>\n━━━━━━━━━━━━━━━━━━━━"
         if service != "all":
             title += f"\nFiltro: <b>{html.escape(service)}</b>"
         lines = [title, f"\nResultados: <b>{total}</b>"]
@@ -164,6 +174,7 @@ def _alerts(page: int = 0, service: str = "all") -> tuple[str, dict]:
             buttons.append([{
                 "text": f"Revisar #{item.id} · {item.service or 'Servicio'}",
                 "callback_data": f"alert:{item.id}",
+                "style": "danger" if item.severity == "critical" else "primary",
             }])
         if not rows:
             lines.append("\n✅ No hay alertas en esta selección.")
@@ -173,11 +184,13 @@ def _alerts(page: int = 0, service: str = "all") -> tuple[str, dict]:
             navigation.append({
                 "text": "◀️ Anterior",
                 "callback_data": f"alerts:{page - 1}:{service}",
+                "style": "primary",
             })
         if (page + 1) * _PAGE_SIZE < total:
             navigation.append({
                 "text": "Siguiente ▶️",
                 "callback_data": f"alerts:{page + 1}:{service}",
+                "style": "primary",
             })
         if navigation:
             buttons.append(navigation)
@@ -192,11 +205,16 @@ def _alerts(page: int = 0, service: str = "all") -> tuple[str, dict]:
                 .limit(8)
             ).all()
         ]
-        filter_buttons = [{"text": "Todas", "callback_data": "alerts:0:all"}]
+        filter_buttons = [{
+            "text": "Todas",
+            "callback_data": "alerts:0:all",
+            "style": "success" if service == "all" else "primary",
+        }]
         filter_buttons.extend(
             {
                 "text": item[:16],
                 "callback_data": f"alerts:0:{item}"[:64],
+                "style": "success" if item.lower() == service.lower() else "primary",
             }
             for item in services
         )
@@ -220,7 +238,8 @@ def _alert_detail(alert_id: int) -> tuple[str, dict]:
             return "❌ La alerta ya no existe.", {"inline_keyboard": []}
         state = "Resuelta" if item.resolved else "Pendiente"
         text = (
-            f"🚨 <b>ALERTA #{item.id}</b>\n\n"
+            f"🔴 <b>ALERTA #{item.id}</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
             f"<b>Estado:</b> {state}\n"
             f"<b>Severidad:</b> {html.escape(item.severity)}\n"
             f"<b>Servicio:</b> {html.escape(item.service or 'No identificado')}\n"
@@ -237,8 +256,9 @@ def _alert_detail(alert_id: int) -> tuple[str, dict]:
             buttons.insert(0, [{
                 "text": "✅ Marcar resuelta",
                 "callback_data": f"resolve:ask:{item.id}",
+                "style": "success",
             }])
-        buttons.append([{"text": "◀️ Volver", "callback_data": "alerts:0:all"}])
+        buttons.append([{"text": "◀️ Volver", "callback_data": "alerts:0:all", "style": "primary"}])
         return text, {"inline_keyboard": buttons}
     finally:
         db.close()
@@ -271,7 +291,7 @@ def _accounts(page: int = 0) -> tuple[str, dict]:
             .offset(page * _PAGE_SIZE)
             .limit(_PAGE_SIZE)
         ).all()
-        lines = ["📬 <b>CUENTAS CONECTADAS</b>", f"\nTotal: <b>{total}</b>"]
+        lines = ["📬 <b>CUENTAS CONECTADAS</b>\n━━━━━━━━━━━━━━━━━━━━", f"\nTotal supervisado: <b>{total}</b>"]
         buttons: list[list[dict[str, str]]] = []
         for account in rows:
             icon = "✅" if account.last_status == "ok" else "⚠️"
@@ -283,15 +303,16 @@ def _accounts(page: int = 0) -> tuple[str, dict]:
             buttons.append([{
                 "text": f"🔄 Sincronizar {_mask_email(account.email)}",
                 "callback_data": f"sync:{account.id}",
+                "style": "success",
             }])
         navigation: list[dict[str, str]] = []
         if page > 0:
-            navigation.append({"text": "◀️ Anterior", "callback_data": f"accounts:{page - 1}"})
+            navigation.append({"text": "◀️ Anterior", "callback_data": f"accounts:{page - 1}", "style": "primary"})
         if (page + 1) * _PAGE_SIZE < total:
-            navigation.append({"text": "Siguiente ▶️", "callback_data": f"accounts:{page + 1}"})
+            navigation.append({"text": "Siguiente ▶️", "callback_data": f"accounts:{page + 1}", "style": "primary"})
         if navigation:
             buttons.append(navigation)
-        buttons.append([{"text": "🔄 Sincronizar todas", "callback_data": "syncall:ask"}])
+        buttons.append([{"text": "🔄 Sincronizar todas", "callback_data": "syncall:ask", "style": "success"}])
         return "\n".join(lines), {"inline_keyboard": buttons}
     finally:
         db.close()
@@ -349,7 +370,7 @@ def _search(email: str) -> str:
         return "❌ Esa cuenta no está registrada en Mail Control."
     if not messages:
         return f"📭 No hay correos guardados para <code>{html.escape(_mask_email(email))}</code>."
-    lines = [f"🔎 <b>ÚLTIMOS CORREOS</b>\n<code>{html.escape(_mask_email(email))}</code>"]
+    lines = [f"🔎 <b>ÚLTIMOS CORREOS</b>\n━━━━━━━━━━━━━━━━━━━━\n<code>{html.escape(_mask_email(email))}</code>"]
     for message in messages:
         lines.append(
             f"\n• <b>{html.escape(message.from_name or message.from_addr)[:80]}</b>\n"
@@ -392,7 +413,8 @@ def _code(email: str) -> str:
             if code:
                 _audit("read_code", _mask_email(email))
                 return (
-                    "🔐 <b>CÓDIGO RECIENTE</b>\n\n"
+                    "🔐 <b>CÓDIGO SEGURO</b>\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n\n"
                     f"Cuenta: <code>{html.escape(_mask_email(email))}</code>\n"
                     f"Código: <code>{code}</code>\n"
                     f"Remitente: {html.escape(message.from_name or message.from_addr)}\n\n"
@@ -410,7 +432,7 @@ def _audit_report() -> str:
         return "⚠️ No se pudo consultar la auditoría."
     if not records:
         return "🧾 Todavía no hay operaciones administrativas registradas."
-    lines = ["🧾 <b>ÚLTIMAS OPERACIONES</b>"]
+    lines = ["🧾 <b>REGISTRO DE AUDITORÍA</b>\n━━━━━━━━━━━━━━━━━━━━"]
     for raw in records:
         event = json.loads(raw)
         timestamp = datetime.fromisoformat(event["at"]).strftime("%d/%m %H:%M")
@@ -471,14 +493,14 @@ def _handle_callback(update: dict) -> None:
             callback,
             f"⚠️ <b>CONFIRMAR ACCIÓN</b>\n\n¿Marcar la alerta #{alert_id} como resuelta?",
             {"inline_keyboard": [[
-                {"text": "✅ Sí, resolver", "callback_data": f"resolve:yes:{alert_id}"},
-                {"text": "Cancelar", "callback_data": f"alert:{alert_id}"},
+                {"text": "✅ Sí, resolver", "callback_data": f"resolve:yes:{alert_id}", "style": "success"},
+                {"text": "Cancelar", "callback_data": f"alert:{alert_id}", "style": "danger"},
             ]]},
         )
     elif data.startswith("resolve:yes:"):
         alert_id = int(data.rsplit(":", 1)[1])
         _edit(callback, _resolve_alert(alert_id), {
-            "inline_keyboard": [[{"text": "Volver a alertas", "callback_data": "alerts:0:all"}]]
+            "inline_keyboard": [[{"text": "Volver a alertas", "callback_data": "alerts:0:all", "style": "primary"}]]
         })
     elif data.startswith("accounts:"):
         text, markup = _accounts(int(data.split(":")[1]))
@@ -491,8 +513,8 @@ def _handle_callback(update: dict) -> None:
             "⚠️ <b>CONFIRMAR SINCRONIZACIÓN</b>\n\n"
             "Se conectará a todas las cuentas habilitadas.",
             {"inline_keyboard": [[
-                {"text": "✅ Confirmar", "callback_data": "syncall:yes"},
-                {"text": "Cancelar", "callback_data": "accounts:0"},
+                {"text": "✅ Confirmar", "callback_data": "syncall:yes", "style": "success"},
+                {"text": "Cancelar", "callback_data": "accounts:0", "style": "danger"},
             ]]},
         )
     elif data == "syncall:yes":

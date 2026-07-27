@@ -82,10 +82,12 @@ def notify_critical_alert(
                 {
                     "text": "Revisar alerta",
                     "callback_data": f"alert:{alert_id}",
+                    "style": "danger",
                 },
                 {
                     "text": "Abrir panel",
                     "url": f"{settings.FRONTEND_URL.rstrip('/')}/alertas",
+                    "style": "primary",
                 },
             ]]
         },
@@ -124,6 +126,7 @@ def notify_account_error(*, account_id: int, email: str, error: str) -> None:
             "inline_keyboard": [[{
                 "text": "Abrir cuentas",
                 "url": f"{settings.FRONTEND_URL.rstrip('/')}/cuentas",
+                "style": "primary",
             }]]
         },
     )

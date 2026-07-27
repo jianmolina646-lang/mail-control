@@ -350,7 +350,8 @@ def send_telegram_daily_summary() -> int:
     finally:
         db.close()
     sent = telegram_notifier.send_message(
-        "☀️ <b>RESUMEN DIARIO · MAIL CONTROL</b>\n\n"
+        "☀️ <b>RESUMEN DIARIO · MAIL CONTROL</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
         f"📬 Cuentas: <b>{accounts}</b>\n"
         f"✅ Conectadas: <b>{connected}</b>\n"
         f"⚠️ Con error: <b>{errors}</b>\n"
@@ -358,8 +359,8 @@ def send_telegram_daily_summary() -> int:
         f"✉️ Correos recibidos en 24 h: <b>{messages}</b>",
         reply_markup={
             "inline_keyboard": [[
-                {"text": "Ver alertas", "callback_data": "alerts:0:all"},
-                {"text": "Ver cuentas", "callback_data": "accounts:0"},
+                {"text": "Ver alertas", "callback_data": "alerts:0:all", "style": "danger"},
+                {"text": "Ver cuentas", "callback_data": "accounts:0", "style": "primary"},
             ]]
         },
     )
