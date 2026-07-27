@@ -16,7 +16,7 @@ import Subscriptions from "./pages/Subscriptions";
 function Protected({ children }) {
   const [state, setState] = React.useState("loading");
   React.useEffect(() => { api.me().then(() => setState("authenticated")).catch(() => setState("anonymous")); }, []);
-  if (state === "loading") return <div className="flex min-h-screen items-center justify-center bg-slate-50 text-sm text-slate-500 dark:bg-slate-950">Verificando sesión…</div>;
+  if (state === "loading") return <div className="session-loader">Verificando sesión…</div>;
   return state === "authenticated" ? children : <Navigate to="/login" replace />;
 }
 

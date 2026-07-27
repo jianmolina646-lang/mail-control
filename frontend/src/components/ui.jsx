@@ -14,22 +14,16 @@ export function PageHeader({ eyebrow, title, description, actions }) {
 }
 
 export function Notice({ tone = "info", children }) {
-  const styles = {
-    success: "border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200",
-    error: "border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-200",
-    warning: "border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200",
-    info: "border-blue-200 bg-blue-50 text-blue-800 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-200",
-  };
   const Icon = tone === "success" ? CheckCircle2 : AlertCircle;
-  return <div role={tone === "error" ? "alert" : "status"} className={`flex gap-2.5 rounded-md border p-3 text-sm ${styles[tone]}`}><Icon className="mt-0.5 shrink-0" size={17} /><div>{children}</div></div>;
+  return <div role={tone === "error" ? "alert" : "status"} className={`mc-notice is-${tone}`}><Icon className="mt-0.5 shrink-0" size={18} /><div>{children}</div></div>;
 }
 
 export function EmptyState({ icon: Icon = Inbox, title, description, action }) {
   return (
-    <div className="flex min-h-64 flex-col items-center justify-center px-6 py-10 text-center">
-      <Icon size={24} className="mb-4 text-slate-400" />
-      <h3 className="text-sm font-semibold text-slate-900 dark:text-white">{title}</h3>
-      <p className="mt-1 max-w-sm text-sm leading-6 text-slate-500">{description}</p>
+    <div className="mc-empty-state">
+      <span className="mc-empty-icon"><Icon size={22} /></span>
+      <h3>{title}</h3>
+      <p>{description}</p>
       {action && <div className="mt-5">{action}</div>}
     </div>
   );
@@ -44,13 +38,6 @@ export function InlineLoading({ label = "Cargando" }) {
 }
 
 export function StatusBadge({ status, children }) {
-  const styles = {
-    ok: "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/50 dark:text-emerald-300",
-    active: "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/50 dark:text-emerald-300",
-    warning: "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950/50 dark:text-amber-300",
-    error: "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900 dark:bg-rose-950/50 dark:text-rose-300",
-    critical: "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900 dark:bg-rose-950/50 dark:text-rose-300",
-    neutral: "border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300",
-  };
-  return <span className={`inline-flex items-center rounded border px-2 py-0.5 text-xs font-medium ${styles[status] || styles.neutral}`}>{children}</span>;
+  const tone = ["ok", "active"].includes(status) ? "success" : ["error", "critical"].includes(status) ? "danger" : status === "warning" ? "warning" : "neutral";
+  return <span className={`mc-status is-${tone}`}>{children}</span>;
 }
