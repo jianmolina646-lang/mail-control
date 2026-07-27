@@ -18,6 +18,12 @@ class Settings(BaseSettings):
     LOGIN_BLOCK_SECONDS: int = 15 * 60
     SESSION_COOKIE_NAME: str = "__Host-mailctl_session"
     SESSION_COOKIE_SECURE: bool = True
+    ALLOWED_HOSTS: str = "panel.ecormecejhelizstore.com,localhost,127.0.0.1,backend"
+    HTTP_MAX_BODY_BYTES: int = 1024 * 1024
+    HTTP_RATE_LIMIT: int = 240
+    HTTP_WRITE_RATE_LIMIT: int = 90
+    HTTP_LOGIN_RATE_LIMIT: int = 20
+    HTTP_AGENT_RATE_LIMIT: int = 300
     # Token independiente para el agente local. Nunca reutilizar SECRET_KEY/JWT.
     MAIL_AGENT_API_TOKEN: str = ""
     MAIL_AGENT_CODE_MAX_AGE_SECONDS: int = 600

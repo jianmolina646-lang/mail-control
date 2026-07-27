@@ -1,5 +1,6 @@
 async function request(path, { method = "GET", body, form } = {}) {
   const headers = {};
+  const unsafe = !["GET", "HEAD", "OPTIONS"].includes(method);
 
   let payload;
   if (form) {
@@ -8,6 +9,15 @@ async function request(path, { method = "GET", body, form } = {}) {
   } else if (body !== undefined) {
     payload = JSON.stringify(body);
     headers["Content-Type"] = "application/json";
+  }
+  if (unsafe) {
+    const csrf = document.cookie
+      .split("; ")
+      .find((item) => item.startsWith("mailctl_csrf="))
+      ?.split("=")
+      .slice(1)
+      .join("=");
+    if (csrf) headers["X-CSRF-Token"] = decodeURIComponent(csrf);
   }
 
   const res = await fetch(`/api${path}`, {

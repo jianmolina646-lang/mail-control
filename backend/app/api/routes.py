@@ -11,6 +11,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, joinedload
 
 from ..core import crypto
+from ..core import request_security
 from ..core.config import settings
 from ..core.db import get_db
 from ..core.login_limiter import clear_failures, is_blocked, register_failure
@@ -119,6 +120,13 @@ def logout(response: Response):
         path="/",
         secure=settings.SESSION_COOKIE_SECURE,
         httponly=True,
+        samesite="strict",
+    )
+    response.delete_cookie(
+        request_security.CSRF_COOKIE_NAME,
+        path="/",
+        secure=settings.SESSION_COOKIE_SECURE,
+        httponly=False,
         samesite="strict",
     )
     return {"ok": True}

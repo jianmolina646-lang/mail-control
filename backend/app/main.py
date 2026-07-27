@@ -5,6 +5,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 from sqlalchemy import inspect, text
 
 from .api.routes import router
@@ -12,6 +13,7 @@ from .api.agent_routes import router as agent_router
 from .core.config import settings
 from .core.db import Base, SessionLocal, engine
 from .core.security import hash_password
+from .core import request_security
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -27,12 +29,18 @@ allowed_origins = [
     for origin in settings.ALLOWED_ORIGINS.split(",")
     if origin.strip()
 ]
+allowed_hosts = [
+    host.strip()
+    for host in settings.ALLOWED_HOSTS.split(",")
+    if host.strip()
+]
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "DELETE"],
-    allow_headers=["Content-Type", "Authorization"],
+    allow_headers=["Content-Type", "Authorization", "X-CSRF-Token"],
 )
 app.include_router(router)
 app.include_router(agent_router)
@@ -40,14 +48,78 @@ app.include_router(agent_router)
 
 @app.middleware("http")
 async def security_headers(request, call_next):
-    if request.method in {"POST", "PATCH", "PUT", "DELETE"}:
+    method = request.method.upper()
+    path = request.url.path
+    ip = request_security.client_ip(
+        request.headers,
+        request.client.host if request.client else None,
+    )
+
+    def reject(status_code: int, detail: str, reason: str, **headers):
+        request_security.audit_rejection(ip, method, path, reason)
+        return JSONResponse(
+            status_code=status_code,
+            content={"detail": detail},
+            headers={key: str(value) for key, value in headers.items()},
+        )
+
+    if method not in request_security.ALLOWED_METHODS:
+        return reject(405, "Método no permitido", "method")
+
+    raw_length = request.headers.get("content-length", "0")
+    try:
+        content_length = int(raw_length)
+    except ValueError:
+        return reject(400, "Content-Length inválido", "content_length_invalid")
+    if content_length < 0 or content_length > settings.HTTP_MAX_BODY_BYTES:
+        return reject(413, "Petición demasiado grande", "body_too_large")
+    if not request_security.content_type_allowed(
+        method,
+        content_length,
+        request.headers.get("content-type", ""),
+    ):
+        return reject(415, "Content-Type no permitido", "content_type")
+
+    allowed, retry_after = request_security.rate_limit(ip, path, method)
+    if not allowed:
+        return reject(
+            429,
+            "Demasiadas peticiones. Intenta nuevamente en unos segundos.",
+            "rate_limit",
+            **{"Retry-After": retry_after},
+        )
+
+    if method not in request_security.SAFE_METHODS:
         origin = request.headers.get("origin")
         if origin and origin not in allowed_origins:
-            return JSONResponse(
-                status_code=403,
-                content={"detail": "Origen no permitido"},
+            return reject(403, "Origen no permitido", "origin")
+        has_session = bool(request.cookies.get(settings.SESSION_COOKIE_NAME))
+        is_internal_agent = path.startswith("/api/internal/agent/")
+        if (
+            has_session
+            and path != "/api/auth/login"
+            and not is_internal_agent
+            and not request_security.csrf_valid(
+                request.cookies.get(request_security.CSRF_COOKIE_NAME, ""),
+                request.headers.get(request_security.CSRF_HEADER_NAME, ""),
             )
+        ):
+            return reject(403, "Token CSRF inválido", "csrf")
+
     response = await call_next(request)
+    if (
+        not request.cookies.get(request_security.CSRF_COOKIE_NAME)
+        and (method in request_security.SAFE_METHODS or path == "/api/auth/login")
+    ):
+        response.set_cookie(
+            key=request_security.CSRF_COOKIE_NAME,
+            value=request_security.new_csrf_token(),
+            max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+            secure=settings.SESSION_COOKIE_SECURE,
+            httponly=False,
+            samesite="strict",
+            path="/",
+        )
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "same-origin"
@@ -55,6 +127,8 @@ async def security_headers(request, call_next):
         "camera=(), microphone=(), geolocation=()"
     )
     response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+    response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
+    response.headers["Cache-Control"] = "no-store"
     response.headers["Strict-Transport-Security"] = (
         "max-age=31536000; includeSubDomains"
     )
