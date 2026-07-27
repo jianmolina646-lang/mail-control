@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+import hashlib
 import json
 import logging
 import re
@@ -11,12 +12,13 @@ from datetime import datetime, timedelta, timezone
 from urllib import parse, request
 
 import redis as redis_lib
+from bs4 import BeautifulSoup
 from sqlalchemy import func, select
 from sqlalchemy.orm import joinedload
 
 from .core.config import settings
 from .core.db import SessionLocal
-from .models.models import Alert, MailAccount, Message, Subscription
+from .models.models import AgentCodeReceipt, Alert, MailAccount, Message, Subscription
 from .services.telegram_notifier import send_message
 
 logging.basicConfig(level=logging.INFO)
@@ -29,6 +31,29 @@ _CODE_PATTERNS = (
         r"[^0-9]{0,40}([0-9]{4,8})"
     ),
     re.compile(r"(?<!\d)(\d{6})(?!\d)"),
+)
+_NETFLIX_URL_PATTERN = re.compile(r"https://[^\s<>\"']+", re.IGNORECASE)
+_NETFLIX_LOGIN_TERMS = (
+    "inicio de sesión",
+    "inicio de sesion",
+    "iniciar sesión",
+    "iniciar sesion",
+    "sin contraseña",
+    "sin contrasena",
+    "sign in",
+    "signin",
+    "log in",
+    "login",
+    "acceso temporal",
+)
+_NETFLIX_LINK_TERMS = (
+    "tv2",
+    "login",
+    "signin",
+    "sign-in",
+    "password",
+    "auth",
+    "access",
 )
 
 
@@ -96,6 +121,7 @@ def _help() -> str:
         "/cuentas — estado y sincronización inmediata\n"
         "/buscar correo@dominio.com — últimos mensajes\n"
         "/codigo correo@dominio.com — código reciente confiable\n"
+        "/netflix correo@dominio.com — enlace reciente de Netflix\n"
         "/auditoria — últimas operaciones del bot\n\n"
         "🛡 <i>Acceso privado · acciones protegidas con confirmación</i>"
     )
@@ -425,6 +451,130 @@ def _code(email: str) -> str:
         db.close()
 
 
+def _is_netflix_domain(value: str) -> bool:
+    domain = value.strip().lower().rstrip(".")
+    return domain == "netflix.com" or domain.endswith(".netflix.com")
+
+
+def _extract_netflix_link(message: Message) -> str | None:
+    candidates: list[str] = []
+    if message.body_html:
+        soup = BeautifulSoup(message.body_html, "html.parser")
+        candidates.extend(
+            str(anchor.get("href") or "")
+            for anchor in soup.find_all("a", href=True)
+        )
+    candidates.extend(
+        _NETFLIX_URL_PATTERN.findall(
+            f"{message.subject}\n{message.snippet}\n{message.body_text[:20_000]}"
+        )
+    )
+    valid: list[tuple[int, str]] = []
+    for candidate in candidates:
+        url = html.unescape(candidate).strip().rstrip(".,);")
+        parsed = parse.urlsplit(url)
+        if parsed.scheme == "https" and parsed.hostname and _is_netflix_domain(
+            parsed.hostname
+        ):
+            target = f"{parsed.path}?{parsed.query}".lower()
+            score = sum(term in target for term in _NETFLIX_LINK_TERMS)
+            valid.append((score, url))
+    if not valid:
+        return None
+    valid.sort(key=lambda item: item[0], reverse=True)
+    return valid[0][1]
+
+
+def _netflix_link(
+    *,
+    email: str | None = None,
+    account_id: int | None = None,
+) -> tuple[str, dict]:
+    db = SessionLocal()
+    try:
+        account = db.scalar(
+            select(MailAccount).where(
+                MailAccount.id == account_id
+                if account_id is not None
+                else func.lower(MailAccount.email) == (email or "").lower(),
+                MailAccount.is_enabled.is_(True),
+            )
+        )
+        if not account:
+            return "❌ Esa cuenta no está registrada o está deshabilitada.", {
+                "inline_keyboard": []
+            }
+
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=15)
+        messages = db.scalars(
+            select(Message)
+            .where(
+                Message.account_id == account.id,
+                Message.received_at >= cutoff,
+                Message.sender_trusted.is_(True),
+            )
+            .order_by(Message.received_at.desc(), Message.id.desc())
+            .limit(25)
+        ).all()
+        for message in messages:
+            sender_domain = message.from_addr.strip().lower().rsplit("@", 1)[-1]
+            if not _is_netflix_domain(sender_domain):
+                continue
+            login_context = f"{message.subject}\n{message.snippet}".lower()
+            if not any(term in login_context for term in _NETFLIX_LOGIN_TERMS):
+                continue
+            link = _extract_netflix_link(message)
+            if not link:
+                continue
+            link_hash = hashlib.sha256(link.encode()).hexdigest()
+            used = db.scalar(
+                select(AgentCodeReceipt.id).where(
+                    AgentCodeReceipt.message_id == message.id,
+                    AgentCodeReceipt.code_hash == link_hash,
+                )
+            )
+            if used:
+                continue
+            db.add(
+                AgentCodeReceipt(
+                    job_id="telegram-netflix-link",
+                    message_id=message.id,
+                    code_hash=link_hash,
+                )
+            )
+            db.commit()
+            _audit("read_netflix_link", f"{_mask_email(account.email)} · msg {message.id}")
+            return (
+                "🎬 <b>ENLACE SEGURO DE NETFLIX</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"Cuenta: <code>{html.escape(_mask_email(account.email))}</code>\n"
+                "Recibido durante los últimos 15 minutos.\n\n"
+                "⚠️ Úsalo únicamente en el dispositivo que solicitó el acceso.",
+                {"inline_keyboard": [[{
+                    "text": "Abrir enlace de Netflix",
+                    "url": link,
+                    "style": "success",
+                }]]},
+            )
+
+        from .workers.tasks import queue_account_sync
+
+        queue_account_sync(account.id)
+        _audit("queue_netflix_link", _mask_email(account.email))
+        return (
+            "⏳ Todavía no encontré un enlace nuevo y confiable de Netflix.\n\n"
+            "Programé una sincronización inmediata. Espera unos segundos y pulsa "
+            "<b>Buscar nuevamente</b>.",
+            {"inline_keyboard": [[{
+                "text": "🔄 Buscar nuevamente",
+                "callback_data": f"netflix:{account.id}",
+                "style": "primary",
+            }]]},
+        )
+    finally:
+        db.close()
+
+
 def _audit_report() -> str:
     try:
         records = _redis.lrange("mailctl:telegram:audit", 0, 9)
@@ -519,6 +669,9 @@ def _handle_callback(update: dict) -> None:
         )
     elif data == "syncall:yes":
         _edit(callback, _queue_sync_all())
+    elif data.startswith("netflix:"):
+        text, markup = _netflix_link(account_id=int(data.split(":", 1)[1]))
+        _edit(callback, text, markup)
 
 
 def _handle_message(update: dict) -> None:
@@ -549,6 +702,9 @@ def _handle_message(update: dict) -> None:
         send_message(_search(text.split(maxsplit=1)[1].strip()))
     elif normalized.startswith("/codigo "):
         send_message(_code(text.split(maxsplit=1)[1].strip()))
+    elif normalized.startswith("/netflix "):
+        body, markup = _netflix_link(email=text.split(maxsplit=1)[1].strip())
+        send_message(body, reply_markup=markup)
     else:
         send_message("No reconocí ese comando.\n\n" + _help(), reply_markup=_menu())
 
@@ -567,6 +723,22 @@ def run() -> None:
     if not identity.get("ok"):
         raise RuntimeError(f"Telegram rechazó el token: {identity.get('description')}")
     _api("deleteWebhook", {"drop_pending_updates": "false"}, timeout=15)
+    _api(
+        "setMyCommands",
+        {
+            "commands": json.dumps([
+                {"command": "resumen", "description": "Estado general"},
+                {"command": "alertas", "description": "Alertas pendientes"},
+                {"command": "cuentas", "description": "Cuentas conectadas"},
+                {"command": "buscar", "description": "Últimos correos de una cuenta"},
+                {"command": "codigo", "description": "Código reciente confiable"},
+                {"command": "netflix", "description": "Enlace reciente de Netflix"},
+                {"command": "auditoria", "description": "Operaciones del bot"},
+                {"command": "ayuda", "description": "Comandos disponibles"},
+            ]),
+        },
+        timeout=15,
+    )
     logger.info("Bot privado iniciado como @%s", identity["result"]["username"])
     offset = int(_redis.get("mailctl:telegram:update-offset") or 0)
     while True:
