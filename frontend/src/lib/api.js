@@ -16,8 +16,8 @@ async function request(path, { method = "GET", body, form } = {}) {
     body: payload,
     credentials: "same-origin",
   });
-  if (res.status === 401) {
-    if (!location.pathname.includes("/login")) location.href = "/login";
+  if (res.status === 401 && !location.pathname.includes("/login")) {
+    location.href = "/login";
     throw new Error("Sesión expirada");
   }
   if (!res.ok) {
@@ -41,12 +41,20 @@ function query(params = {}) {
 }
 
 export const api = {
-  login: (email, password) =>
-    request("/auth/login", { method: "POST", form: { username: email, password } }),
+  login: (email, password, otp = "") =>
+    request("/auth/login", { method: "POST", form: { username: email, password, otp } }),
   logout: () => request("/auth/logout", { method: "POST" }),
   me: () => request("/auth/me"),
   changePassword: (current_password, new_password) =>
     request("/change-password", { method: "POST", body: { current_password, new_password } }),
+  twoFactorStatus: () => request("/auth/2fa"),
+  setupTwoFactor: (current_password) =>
+    request("/auth/2fa/setup", { method: "POST", body: { current_password } }),
+  confirmTwoFactor: (code) =>
+    request("/auth/2fa/confirm", { method: "POST", body: { code } }),
+  disableTwoFactor: (current_password, code) =>
+    request("/auth/2fa", { method: "DELETE", body: { current_password, code } }),
+  syncHistory: (limit = 100) => request(`/sync-history?limit=${limit}`),
   stats: () => request("/stats"),
 
   accounts: () => request("/accounts"),

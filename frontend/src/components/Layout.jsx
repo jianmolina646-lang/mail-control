@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
-  Bell, ChevronLeft, ChevronRight, CreditCard, Inbox, LayoutDashboard,
+  Activity, Bell, ChevronLeft, ChevronRight, CreditCard, Inbox, LayoutDashboard,
   LogOut, Mail, Menu, Moon, Settings, ShieldAlert, Sun, UsersRound, X,
 } from "lucide-react";
 import { api } from "../lib/api";
@@ -15,6 +15,7 @@ const groups = [
   { label: "Administración", items: [
     { to: "/cuentas", label: "Cuentas conectadas", icon: UsersRound },
     { to: "/alertas", label: "Alertas", icon: ShieldAlert, alerts: true },
+    { to: "/actividad", label: "Actividad", icon: Activity },
     { to: "/seguridad", label: "Configuración", icon: Settings },
   ]},
 ];
@@ -26,6 +27,7 @@ const pageMeta = {
   "/cuentas": { title: "Cuentas conectadas", section: "Administración" },
   "/alertas": { title: "Alertas críticas", section: "Supervisión" },
   "/plantillas": { title: "Plantillas", section: "Productividad" },
+  "/actividad": { title: "Actividad de sincronización", section: "Supervisión" },
   "/seguridad": { title: "Configuración", section: "Administración" },
 };
 

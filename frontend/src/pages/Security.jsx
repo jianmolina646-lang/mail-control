@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Activity, Bell, Check, ChevronRight, Circle, KeyRound, LockKeyhole,
   MonitorSmartphone, ShieldCheck, SlidersHorizontal, UserRoundCog,
@@ -21,6 +21,49 @@ export default function Security() {
   const [confirmation, setConfirmation] = useState("");
   const [message, setMessage] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [twoFactor, setTwoFactor] = useState({ enabled: false });
+  const [setup, setSetup] = useState(null);
+  const [twoFactorPassword, setTwoFactorPassword] = useState("");
+  const [twoFactorCode, setTwoFactorCode] = useState("");
+  const [recoveryCodes, setRecoveryCodes] = useState([]);
+
+  useEffect(() => {
+    api.twoFactorStatus().then(setTwoFactor).catch(() => {});
+  }, []);
+
+  const beginTwoFactor = async () => {
+    setSaving(true); setMessage(null);
+    try {
+      setSetup(await api.setupTwoFactor(twoFactorPassword));
+    } catch (error) {
+      setMessage({ tone: "error", text: error.message });
+    } finally { setSaving(false); }
+  };
+
+  const confirmTwoFactor = async () => {
+    setSaving(true); setMessage(null);
+    try {
+      const result = await api.confirmTwoFactor(twoFactorCode);
+      setTwoFactor({ enabled: true });
+      setRecoveryCodes(result.recovery_codes);
+      setSetup(null); setTwoFactorCode(""); setTwoFactorPassword("");
+      setMessage({ tone: "success", text: "Google Authenticator quedó activado." });
+    } catch (error) {
+      setMessage({ tone: "error", text: error.message });
+    } finally { setSaving(false); }
+  };
+
+  const disableTwoFactor = async () => {
+    setSaving(true); setMessage(null);
+    try {
+      await api.disableTwoFactor(twoFactorPassword, twoFactorCode);
+      setTwoFactor({ enabled: false });
+      setTwoFactorPassword(""); setTwoFactorCode(""); setRecoveryCodes([]);
+      setMessage({ tone: "success", text: "La autenticación en dos pasos fue desactivada." });
+    } catch (error) {
+      setMessage({ tone: "error", text: error.message });
+    } finally { setSaving(false); }
+  };
 
   const checks = useMemo(() => [
     { ok: next.length >= 8, label: "Al menos 8 caracteres" },
@@ -86,6 +129,33 @@ export default function Security() {
             </div>
           </div>
         </form>
+
+        <section className="security-card">
+          <div className="security-card-heading">
+            <span><ShieldCheck size={17} /></span>
+            <div><h2>Google Authenticator</h2><p>Segundo factor TOTP para proteger cada inicio de sesión.</p></div>
+          </div>
+          <div className="security-form">
+            {twoFactor.enabled ? <div className="security-2fa-enabled">
+              <p className="security-2fa-status"><Check size={15} /> Autenticación en dos pasos activa</p>
+              <p>Para desactivarla, confirma tu contraseña y un código actual de Google Authenticator.</p>
+              <Field label="Contraseña actual"><input className="input" type="password" autoComplete="current-password" value={twoFactorPassword} onChange={(event) => setTwoFactorPassword(event.target.value)} /></Field>
+              <Field label="Código de 6 dígitos"><input className="input" inputMode="numeric" autoComplete="one-time-code" value={twoFactorCode} onChange={(event) => setTwoFactorCode(event.target.value)} /></Field>
+              <button type="button" className="btn-secondary security-disable-2fa" disabled={!twoFactorPassword || twoFactorCode.length < 6 || saving} onClick={disableTwoFactor}>Desactivar 2FA</button>
+            </div> : <>
+              {!setup ? <>
+                <Field label="Confirma tu contraseña actual"><input className="input" type="password" autoComplete="current-password" value={twoFactorPassword} onChange={(event) => setTwoFactorPassword(event.target.value)} /></Field>
+                <button type="button" className="btn-primary" disabled={!twoFactorPassword || saving} onClick={beginTwoFactor}>Generar código QR</button>
+              </> : <div className="security-2fa-setup">
+                <img src={setup.qr_data_uri} alt="Código QR para Google Authenticator" />
+                <div><strong>Escanea el QR</strong><p>Abre Google Authenticator, pulsa + y escanea este código.</p><code>{setup.secret}</code></div>
+                <Field label="Código de 6 dígitos"><input className="input" inputMode="numeric" autoComplete="one-time-code" value={twoFactorCode} onChange={(event) => setTwoFactorCode(event.target.value)} /></Field>
+                <button type="button" className="btn-primary" disabled={twoFactorCode.length < 6 || saving} onClick={confirmTwoFactor}>Confirmar y activar</button>
+              </div>}
+            </>}
+            {recoveryCodes.length > 0 && <div className="security-recovery"><strong>Guarda estos códigos de recuperación</strong><p>Cada código funciona una sola vez. No volverán a mostrarse.</p><div>{recoveryCodes.map((code) => <code key={code}>{code}</code>)}</div></div>}
+          </div>
+        </section>
 
         <aside className="security-advice">
           <span><UserRoundCog size={18} /></span>

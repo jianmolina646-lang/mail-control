@@ -12,10 +12,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY backup.sh /usr/local/bin/mailctl-backup
+COPY verify-restore.sh /usr/local/bin/mailctl-verify-restore
 COPY entrypoint.sh /usr/local/bin/backup-entrypoint
 COPY crontab /etc/cron.d/mailctl-backup
 
-RUN chmod 700 /usr/local/bin/mailctl-backup /usr/local/bin/backup-entrypoint \
+RUN chmod 700 /usr/local/bin/mailctl-backup /usr/local/bin/mailctl-verify-restore /usr/local/bin/backup-entrypoint \
     && chmod 0644 /etc/cron.d/mailctl-backup \
     && crontab /etc/cron.d/mailctl-backup
 

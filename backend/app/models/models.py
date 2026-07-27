@@ -31,6 +31,9 @@ class User(Base):
     hashed_password: Mapped[str] = mapped_column(String(255))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=True)
+    totp_secret_encrypted: Mapped[str] = mapped_column(Text, default="")
+    totp_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    recovery_code_hashes: Mapped[str] = mapped_column(Text, default="[]")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
@@ -61,6 +64,9 @@ class MailAccount(Base):
         back_populates="account", cascade="all, delete-orphan"
     )
     subscriptions: Mapped[list["Subscription"]] = relationship(
+        back_populates="account", cascade="all, delete-orphan"
+    )
+    sync_events: Mapped[list["SyncEvent"]] = relationship(
         back_populates="account", cascade="all, delete-orphan"
     )
 
@@ -106,6 +112,29 @@ class Message(Base):
     alert: Mapped["Alert | None"] = relationship(
         back_populates="message", uselist=False, cascade="all, delete-orphan"
     )
+
+
+class SyncEvent(Base):
+    """Resultado persistente de cada intento de sincronización."""
+
+    __tablename__ = "sync_events"
+    __table_args__ = (
+        Index("ix_sync_event_account_created", "account_id", "created_at"),
+        Index("ix_sync_event_status_created", "status", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    account_id: Mapped[int] = mapped_column(
+        ForeignKey("mail_accounts.id", ondelete="CASCADE"), index=True
+    )
+    status: Mapped[str] = mapped_column(String(20))
+    messages_found: Mapped[int] = mapped_column(Integer, default=0)
+    new_messages: Mapped[int] = mapped_column(Integer, default=0)
+    duration_ms: Mapped[int] = mapped_column(Integer, default=0)
+    error: Mapped[str] = mapped_column(String(500), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    account: Mapped["MailAccount"] = relationship(back_populates="sync_events")
 
 
 class AgentCodeReceipt(Base):

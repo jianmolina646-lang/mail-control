@@ -12,6 +12,7 @@ import Accounts from "./pages/Accounts";
 import Security from "./pages/Security";
 import Templates from "./pages/Templates";
 import Subscriptions from "./pages/Subscriptions";
+import ActivityPage from "./pages/Activity";
 
 function Protected({ children }) {
   const [state, setState] = React.useState("loading");
@@ -33,6 +34,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(
           <Route path="/cuentas" element={<Accounts />} />
           <Route path="/plantillas" element={<Templates />} />
           <Route path="/seguridad" element={<Security />} />
+          <Route path="/actividad" element={<ActivityPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

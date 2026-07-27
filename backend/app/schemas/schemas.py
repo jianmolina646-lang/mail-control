@@ -21,11 +21,38 @@ class ChangePasswordIn(BaseModel):
     new_password: str = Field(..., min_length=8, max_length=128)
 
 
+class TwoFactorSetupIn(BaseModel):
+    current_password: str
+
+
+class TwoFactorConfirmIn(BaseModel):
+    code: str = Field(..., min_length=6, max_length=32)
+
+
+class TwoFactorDisableIn(BaseModel):
+    current_password: str
+    code: str = Field(..., min_length=6, max_length=32)
+
+
 class UserOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
     email: EmailStr
     is_admin: bool
+    totp_enabled: bool = False
+
+
+class SyncEventOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    account_id: int
+    account_email: str
+    status: str
+    messages_found: int
+    new_messages: int
+    duration_ms: int
+    error: str
+    created_at: datetime
 
 
 # --- Cuentas de correo ---

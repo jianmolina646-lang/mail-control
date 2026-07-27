@@ -16,6 +16,8 @@ export default function Login() {
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [otp, setOtp] = useState("");
+  const [requiresOtp, setRequiresOtp] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -25,9 +27,14 @@ export default function Login() {
     setError("");
     setLoading(true);
     try {
-      await api.login(email.trim(), password);
+      await api.login(email.trim(), password, otp);
       navigate("/");
     } catch (err) {
+      if (err.message === "TOTP_REQUIRED") {
+        setRequiresOtp(true);
+        setError("");
+        return;
+      }
       setError(err.message || "No pudimos iniciar sesión. Revisa tus datos e inténtalo de nuevo.");
     } finally {
       setLoading(false);
@@ -78,8 +85,9 @@ export default function Login() {
           <form onSubmit={submit} className="login-reference-form">
             <label><span>Correo electrónico</span><div><Mail size={15} /><input type="email" inputMode="email" autoComplete="username" required aria-invalid={Boolean(error)} value={email} onChange={(event) => { setEmail(event.target.value); if (error) setError(""); }} placeholder="nombre@empresa.com" /></div></label>
             <label><span>Contraseña</span><div><LockKeyhole size={15} /><input type={showPassword ? "text" : "password"} autoComplete="current-password" required aria-invalid={Boolean(error)} value={password} onChange={(event) => { setPassword(event.target.value); if (error) setError(""); }} placeholder="Ingresa tu contraseña" /><button type="button" onClick={() => setShowPassword((value) => !value)} aria-label={showPassword ? "Ocultar contraseña" : "Mostrar contraseña"}>{showPassword ? <EyeOff size={15} /> : <Eye size={15} />}</button></div></label>
+            {requiresOtp && <label><span>Código de Google Authenticator</span><div><ShieldCheck size={15} /><input autoFocus inputMode="numeric" autoComplete="one-time-code" required value={otp} onChange={(event) => setOtp(event.target.value)} placeholder="000 000 o código de recuperación" /></div></label>}
             <div className={`login-reference-error ${error ? "is-visible" : ""}`} role="alert">{error && <><AlertTriangle size={14} /> {error}</>}</div>
-            <button className="login-reference-submit" disabled={loading || !email.trim() || !password}><span>{loading ? "Verificando acceso" : "Entrar a Mail Control"}</span>{loading ? <i /> : <ArrowRight size={15} />}</button>
+            <button className="login-reference-submit" disabled={loading || !email.trim() || !password || (requiresOtp && !otp.trim())}><span>{loading ? "Verificando acceso" : requiresOtp ? "Verificar y entrar" : "Entrar a Mail Control"}</span>{loading ? <i /> : <ArrowRight size={15} />}</button>
           </form>
 
           <div className="login-reference-trust"><ShieldCheck size={13} /> Tus datos están protegidos y cifrados</div>

@@ -82,7 +82,30 @@ def startup() -> None:
     _ensure_oauth_columns()
     _ensure_message_folder_columns()
     _ensure_message_security_columns()
+    _ensure_user_totp_columns()
     _ensure_admin()
+
+
+def _ensure_user_totp_columns() -> None:
+    columns = {item["name"] for item in inspect(engine).get_columns("users")}
+    statements = []
+    if "totp_secret_encrypted" not in columns:
+        statements.append(
+            "ALTER TABLE users ADD COLUMN totp_secret_encrypted TEXT NOT NULL DEFAULT ''"
+        )
+    if "totp_enabled" not in columns:
+        statements.append(
+            "ALTER TABLE users ADD COLUMN totp_enabled BOOLEAN NOT NULL DEFAULT FALSE"
+        )
+    if "recovery_code_hashes" not in columns:
+        statements.append(
+            "ALTER TABLE users ADD COLUMN recovery_code_hashes TEXT NOT NULL DEFAULT '[]'"
+        )
+    if statements:
+        with engine.begin() as connection:
+            for statement in statements:
+                connection.execute(text(statement))
+        logger.info("Esquema actualizado para autenticación TOTP")
 
 
 def _ensure_oauth_columns() -> None:

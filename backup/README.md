@@ -48,5 +48,13 @@ createdb mailctl_restore_test
 pg_restore --no-owner --no-acl --dbname=mailctl_restore_test database.dump
 ```
 
-Un respaldo solo se considera válido después de completar una restauración de
-prueba.
+El contenedor ejecuta automáticamente una restauración aislada cada domingo a
+las 03:30. También se puede verificar el respaldo más reciente bajo demanda:
+
+```bash
+docker compose --profile backup exec backup /usr/local/bin/mailctl-verify-restore
+```
+
+La prueba descifra el archivo, valida sus hashes, restaura PostgreSQL en una base
+temporal, comprueba que contiene tablas y elimina esa base. Nunca escribe sobre
+la base de producción.

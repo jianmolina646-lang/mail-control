@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, Response
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.responses import RedirectResponse
 from sqlalchemy import func, or_, select
@@ -20,7 +20,7 @@ from ..core.security import (
     hash_password,
     verify_password,
 )
-from ..models.models import Alert, MailAccount, Message, Subscription, User
+from ..models.models import Alert, MailAccount, Message, Subscription, SyncEvent, User
 from ..schemas.schemas import (
     AlertOut,
     ChangePasswordIn,
@@ -31,12 +31,16 @@ from ..schemas.schemas import (
     PaginatedAlerts,
     PaginatedMessages,
     StatsOut,
+    SyncEventOut,
     SubscriptionDetail,
     SubscriptionOut,
     SubscriptionStatsOut,
     UserOut,
+    TwoFactorConfirmIn,
+    TwoFactorDisableIn,
+    TwoFactorSetupIn,
 )
-from ..services import imap_service, microsoft_auth
+from ..services import imap_service, microsoft_auth, two_factor
 
 router = APIRouter(prefix="/api")
 
@@ -54,6 +58,7 @@ def login(
     response: Response,
     form: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db),
+    otp: str = Form(""),
 ):
     # El primer valor de X-Forwarded-For es la IP real del cliente
     # (los proxies intermedios pisan X-Real-IP con su propia IP).
@@ -78,6 +83,22 @@ def login(
                 detail="IP bloqueada durante 15 minutos.",
             )
         raise HTTPException(status_code=401, detail="Credenciales inválidas")
+    if user.totp_enabled:
+        if not otp:
+            raise HTTPException(status_code=401, detail="TOTP_REQUIRED")
+        secret = two_factor.decrypt_secret(user.totp_secret_encrypted)
+        valid = two_factor.verify_totp(secret, otp)
+        if not valid:
+            valid, remaining = two_factor.consume_recovery_code(
+                user.recovery_code_hashes,
+                otp,
+            )
+            if valid:
+                user.recovery_code_hashes = remaining
+                db.commit()
+        if not valid:
+            register_failure(ip, form.username)
+            raise HTTPException(status_code=401, detail="Código de verificación inválido")
     clear_failures(ip, form.username)
     response.set_cookie(
         key=settings.SESSION_COOKIE_NAME,
@@ -108,6 +129,70 @@ def me(user: User = Depends(get_current_user)):
     return user
 
 
+@router.get("/auth/2fa")
+def two_factor_status(user: User = Depends(get_current_user)):
+    return {"enabled": user.totp_enabled}
+
+
+@router.post("/auth/2fa/setup")
+def two_factor_setup(
+    data: TwoFactorSetupIn,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if not verify_password(data.current_password, user.hashed_password):
+        raise HTTPException(status_code=400, detail="La contraseña actual es incorrecta")
+    secret = two_factor.new_secret()
+    user.totp_secret_encrypted = two_factor.encrypt_secret(secret)
+    user.totp_enabled = False
+    user.recovery_code_hashes = "[]"
+    db.commit()
+    uri = two_factor.provisioning_uri(secret, user.email)
+    return {
+        "secret": secret,
+        "provisioning_uri": uri,
+        "qr_data_uri": two_factor.qr_data_uri(uri),
+    }
+
+
+@router.post("/auth/2fa/confirm")
+def two_factor_confirm(
+    data: TwoFactorConfirmIn,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if not user.totp_secret_encrypted:
+        raise HTTPException(status_code=400, detail="Primero inicia la configuración 2FA")
+    secret = two_factor.decrypt_secret(user.totp_secret_encrypted)
+    if not two_factor.verify_totp(secret, data.code):
+        raise HTTPException(status_code=400, detail="El código no es válido")
+    codes = two_factor.generate_recovery_codes()
+    user.recovery_code_hashes = two_factor.hash_recovery_codes(codes)
+    user.totp_enabled = True
+    db.commit()
+    return {"enabled": True, "recovery_codes": codes}
+
+
+@router.delete("/auth/2fa")
+def two_factor_disable(
+    data: TwoFactorDisableIn,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if not verify_password(data.current_password, user.hashed_password):
+        raise HTTPException(status_code=400, detail="La contraseña actual es incorrecta")
+    if not user.totp_secret_encrypted or not two_factor.verify_totp(
+        two_factor.decrypt_secret(user.totp_secret_encrypted),
+        data.code,
+    ):
+        raise HTTPException(status_code=400, detail="El código no es válido")
+    user.totp_enabled = False
+    user.totp_secret_encrypted = ""
+    user.recovery_code_hashes = "[]"
+    db.commit()
+    return {"enabled": False}
+
+
 @router.post("/change-password")
 def change_password(
     data: ChangePasswordIn,
@@ -123,6 +208,34 @@ def change_password(
     user.hashed_password = hash_password(data.new_password)
     db.commit()
     return {"ok": True}
+
+
+@router.get("/sync-history", response_model=list[SyncEventOut])
+def sync_history(
+    limit: int = Query(100, ge=1, le=500),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    events = db.execute(
+        select(SyncEvent, MailAccount.email)
+        .join(MailAccount, SyncEvent.account_id == MailAccount.id)
+        .order_by(SyncEvent.created_at.desc())
+        .limit(limit)
+    ).all()
+    return [
+        {
+            "id": event.id,
+            "account_id": event.account_id,
+            "account_email": email,
+            "status": event.status,
+            "messages_found": event.messages_found,
+            "new_messages": event.new_messages,
+            "duration_ms": event.duration_ms,
+            "error": event.error,
+            "created_at": event.created_at,
+        }
+        for event, email in events
+    ]
 
 
 # --- Cuentas de correo ---

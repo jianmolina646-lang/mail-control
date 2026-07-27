@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import shutil
+import time
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -14,7 +15,7 @@ from sqlalchemy import delete, func, select
 from ..core.config import settings
 from ..core.crypto import decrypt
 from ..core.db import SessionLocal
-from ..models.models import Alert, MailAccount, Message, Subscription
+from ..models.models import Alert, MailAccount, Message, Subscription, SyncEvent
 from ..services import imap_service, radar, subscription_tracker, telegram_notifier
 from .celery_app import celery_app
 
@@ -194,6 +195,7 @@ def scan_account_for_codes(account_id: int) -> int:
 
 
 def _sync_one_account(account_id: int, *, urgent: bool = False) -> None:
+    started_at = time.monotonic()
     db = SessionLocal()
     try:
         acct = db.get(MailAccount, account_id)
@@ -228,6 +230,12 @@ def _sync_one_account(account_id: int, *, urgent: bool = False) -> None:
             acct.last_status = "error"
             acct.last_error = str(exc)[:500]
             acct.last_synced_at = datetime.now(timezone.utc)
+            db.add(SyncEvent(
+                account_id=acct.id,
+                status="error",
+                duration_ms=round((time.monotonic() - started_at) * 1000),
+                error=str(exc)[:500],
+            ))
             db.commit()
             telegram_notifier.notify_account_error(
                 account_id=acct.id,
@@ -325,6 +333,13 @@ def _sync_one_account(account_id: int, *, urgent: bool = False) -> None:
         acct.last_status = "ok"
         acct.last_error = ""
         acct.last_synced_at = datetime.now(timezone.utc)
+        db.add(SyncEvent(
+            account_id=acct.id,
+            status="ok",
+            messages_found=len(parsed),
+            new_messages=new_messages,
+            duration_ms=round((time.monotonic() - started_at) * 1000),
+        ))
         db.commit()
         if was_error:
             telegram_notifier.notify_account_recovered(
