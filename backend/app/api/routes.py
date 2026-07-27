@@ -55,8 +55,12 @@ def login(
     form: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db),
 ):
+    # El primer valor de X-Forwarded-For es la IP real del cliente
+    # (los proxies intermedios pisan X-Real-IP con su propia IP).
+    fwd = request.headers.get("x-forwarded-for", "")
     ip = (
-        request.headers.get("x-real-ip")
+        (fwd.split(",")[0].strip() if fwd else None)
+        or request.headers.get("x-real-ip")
         or (request.client.host if request.client else None)
         or "unknown"
     )

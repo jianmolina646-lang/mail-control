@@ -9,6 +9,7 @@ import ssl
 import time
 import urllib.parse
 import urllib.request
+import nh3
 from bs4 import BeautifulSoup
 from imapclient import IMAPClient
 from imapclient.exceptions import LoginError
@@ -133,6 +134,18 @@ def _decode(value) -> str:
         return str(make_header(decode_header(value)))
     except Exception:
         return str(value)
+def sanitize_html(html: str) -> str:
+    """Limpia el HTML del correo antes de guardarlo (anti-XSS).
+
+    Quita scripts, event handlers, iframes y demás vectores; deja el markup
+    visual típico de los correos.
+    """
+    if not html:
+        return ""
+    try:
+        return nh3.clean(html, link_rel="noopener noreferrer nofollow")
+    except Exception:
+        return ""
 def _html_to_text(html: str) -> str:
     if not html:
         return ""
@@ -177,7 +190,7 @@ def _extract_bodies(msg: email.message.Message) -> tuple[str, str]:
     text = "\n".join(p for p in text_parts if p)
     if not text and html:
         text = _html_to_text(html)
-    return text[:100_000], html
+    return text[:100_000], sanitize_html(html)
 class ParsedMessage:
     __slots__ = (
         "uid", "folder_name", "message_id", "from_addr", "from_name", "to_addr",
