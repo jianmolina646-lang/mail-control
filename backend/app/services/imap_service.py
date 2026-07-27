@@ -284,8 +284,6 @@ _EXCLUDED_FOLDER_FLAGS = {
     "\\deleted",
     "\\all",
     "\\important",
-    "\\junk",
-    "\\spam",
     "\\flagged",
 }
 

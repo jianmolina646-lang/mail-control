@@ -18,4 +18,7 @@ class FakeServer:
 
 class ReceivedFoldersTests(unittest.TestCase):
     def test_excludes_duplicate_and_system_mailboxes(self):
-        self.assertEqual(_received_folders(FakeServer()), ["Streaming"])
+        self.assertEqual(
+            _received_folders(FakeServer()),
+            ["[Gmail]/Spam", "Streaming"],
+        )
