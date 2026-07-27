@@ -19,33 +19,6 @@ def test_extract_code_prefers_contextual_code():
     assert telegram_bot._extract_code(message) == "482913"
 
 
-def test_extract_netflix_link_accepts_only_https_netflix_domain():
-    message = SimpleNamespace(
-        subject="Inicia sesión en Netflix",
-        snippet="",
-        body_text="",
-        body_html=(
-            '<a href="https://www.netflix.com/">Netflix</a>'
-            '<a href="https://www.netflix.com/tv2/auth?token=secret">Entrar</a>'
-            '<a href="https://attacker.example/netflix">Falso</a>'
-        ),
-    )
-    assert (
-        telegram_bot._extract_netflix_link(message)
-        == "https://www.netflix.com/tv2/auth?token=secret"
-    )
-
-
-def test_extract_netflix_link_rejects_lookalike_domain():
-    message = SimpleNamespace(
-        subject="Netflix",
-        snippet="",
-        body_text="https://netflix.com.attacker.example/login",
-        body_html="",
-    )
-    assert telegram_bot._extract_netflix_link(message) is None
-
-
 def test_authorized_requires_private_admin_chat(monkeypatch):
     monkeypatch.setattr(telegram_bot.settings, "TELEGRAM_ADMIN_CHAT_ID", 123)
     assert telegram_bot._authorized(

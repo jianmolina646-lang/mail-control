@@ -121,7 +121,6 @@ def _help() -> str:
         "/cuentas — estado y sincronización inmediata\n"
         "/buscar correo@dominio.com — últimos mensajes\n"
         "/codigo correo@dominio.com — código reciente confiable\n"
-        "/netflix correo@dominio.com — enlace reciente de Netflix\n"
         "/auditoria — últimas operaciones del bot\n\n"
         "🛡 <i>Acceso privado · acciones protegidas con confirmación</i>"
     )
@@ -669,9 +668,6 @@ def _handle_callback(update: dict) -> None:
         )
     elif data == "syncall:yes":
         _edit(callback, _queue_sync_all())
-    elif data.startswith("netflix:"):
-        text, markup = _netflix_link(account_id=int(data.split(":", 1)[1]))
-        _edit(callback, text, markup)
 
 
 def _handle_message(update: dict) -> None:
@@ -702,9 +698,6 @@ def _handle_message(update: dict) -> None:
         send_message(_search(text.split(maxsplit=1)[1].strip()))
     elif normalized.startswith("/codigo "):
         send_message(_code(text.split(maxsplit=1)[1].strip()))
-    elif normalized.startswith("/netflix "):
-        body, markup = _netflix_link(email=text.split(maxsplit=1)[1].strip())
-        send_message(body, reply_markup=markup)
     else:
         send_message("No reconocí ese comando.\n\n" + _help(), reply_markup=_menu())
 
@@ -732,7 +725,6 @@ def run() -> None:
                 {"command": "cuentas", "description": "Cuentas conectadas"},
                 {"command": "buscar", "description": "Últimos correos de una cuenta"},
                 {"command": "codigo", "description": "Código reciente confiable"},
-                {"command": "netflix", "description": "Enlace reciente de Netflix"},
                 {"command": "auditoria", "description": "Operaciones del bot"},
                 {"command": "ayuda", "description": "Comandos disponibles"},
             ]),
