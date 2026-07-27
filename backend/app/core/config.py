@@ -2,10 +2,12 @@
 
 from functools import lru_cache
 
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
     # --- App ---
     APP_NAME: str = "Mail Control - TEAM JHELIZ"
     DEBUG: bool = False
@@ -60,11 +62,6 @@ class Settings(BaseSettings):
     IMAP_TIMEOUT: int = 15
     # Cada cuántos minutos se cicla el escaneo completo de cuentas.
     SCAN_INTERVAL_MINUTES: int = 5
-
-    class Config:
-        env_file = ".env"
-        extra = "ignore"
-
 
 @lru_cache
 def get_settings() -> Settings:
