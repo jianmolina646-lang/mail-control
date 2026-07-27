@@ -82,6 +82,63 @@ def _pending_key(account_id: int) -> str:
     return f"mailctl:imap_pending:{account_id}"
 
 
+def _is_transient_imap_error(exc: Exception) -> bool:
+    if isinstance(exc, (TimeoutError, ConnectionError, OSError)):
+        return True
+    detail = str(exc).lower()
+    return any(
+        marker in detail
+        for marker in (
+            "timed out",
+            "timeout",
+            "connection reset",
+            "connection aborted",
+            "connection closed",
+            "temporary",
+            "temporarily",
+            "try again",
+            "eof",
+        )
+    )
+
+
+def _fetch_recent_with_retry(account, **kwargs):
+    attempts = max(1, settings.IMAP_RETRY_ATTEMPTS)
+    for attempt in range(1, attempts + 1):
+        try:
+            return imap_service.fetch_recent(account, **kwargs)
+        except Exception as exc:
+            if not _is_transient_imap_error(exc) or attempt >= attempts:
+                raise
+            delay = max(0, settings.IMAP_RETRY_DELAY_SECONDS * attempt)
+            logger.warning(
+                "Fallo IMAP transitorio para %s; reintento %s/%s en %ss: %s",
+                getattr(account, "email", "?"),
+                attempt + 1,
+                attempts,
+                delay,
+                exc,
+            )
+            if delay:
+                time.sleep(delay)
+    raise RuntimeError("No se pudo completar la sincronización IMAP")
+
+
+def _consecutive_failures(db, account_id: int) -> int:
+    statuses = db.scalars(
+        select(SyncEvent.status)
+        .where(SyncEvent.account_id == account_id)
+        .order_by(SyncEvent.created_at.desc())
+        .limit(max(1, settings.IMAP_FAILURES_BEFORE_ALERT))
+    ).all()
+    count = 0
+    for status in statuses:
+        if status != "error":
+            break
+        count += 1
+    return count
+
+
 def queue_account_sync(account_id: int) -> bool:
     """Encola una cuenta solo si no está pendiente o en ejecución."""
     key = _pending_key(account_id)
@@ -203,7 +260,7 @@ def _sync_one_account(account_id: int, *, urgent: bool = False) -> None:
             logger.debug("Cuenta %s no encontrada o deshabilitada", account_id)
             return
 
-        was_error = acct.last_status == "error"
+        previous_failures = _consecutive_failures(db, acct.id)
         existing_rows = db.execute(
             select(Message.folder_name, Message.uid)
             .where(Message.account_id == acct.id)
@@ -219,7 +276,7 @@ def _sync_one_account(account_id: int, *, urgent: bool = False) -> None:
                 if not imap_service.prepare_microsoft_oauth(acct):
                     raise RuntimeError("Cuenta Microsoft pendiente de autorización OAuth2")
                 db.commit()
-            parsed = imap_service.fetch_recent(
+            parsed = _fetch_recent_with_retry(
                 _AccountProxy(acct),
                 limit=10 if urgent else None,
                 include_other_folders=not urgent,
@@ -237,11 +294,17 @@ def _sync_one_account(account_id: int, *, urgent: bool = False) -> None:
                 error=str(exc)[:500],
             ))
             db.commit()
-            telegram_notifier.notify_account_error(
-                account_id=acct.id,
-                email=acct.email,
-                error=str(exc),
-            )
+            if previous_failures + 1 >= settings.IMAP_FAILURES_BEFORE_ALERT:
+                telegram_notifier.notify_account_error(
+                    account_id=acct.id,
+                    email=acct.email,
+                    error=str(exc),
+                )
+            else:
+                logger.warning(
+                    "Primer fallo IMAP de %s; se reintentará sin alertar al usuario",
+                    acct.email,
+                )
             logger.error("IMAP error en %s: %s (tipo: %s)", acct.email, exc, type(exc).__name__, exc_info=True)
             return
 
@@ -341,7 +404,7 @@ def _sync_one_account(account_id: int, *, urgent: bool = False) -> None:
             duration_ms=round((time.monotonic() - started_at) * 1000),
         ))
         db.commit()
-        if was_error:
+        if previous_failures >= settings.IMAP_FAILURES_BEFORE_ALERT:
             telegram_notifier.notify_account_recovered(
                 account_id=acct.id,
                 email=acct.email,

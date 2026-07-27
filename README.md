@@ -65,7 +65,7 @@ mail-control/
 
 - **Semáforo IMAP global en Redis**: nunca hay más de `IMAP_MAX_CONCURRENCY` (50)
   conexiones IMAP abiertas en todo el sistema, sin importar cuántos workers haya.
-- **Chunks chicos**: cada tarea Celery procesa `IMAP_CHUNK_SIZE` (10) cuentas
+- **Chunks chicos**: cada tarea Celery procesa `IMAP_CHUNK_SIZE` (3) cuentas
   **en serie**, abriendo y cerrando cada conexión de inmediato.
 - **Celery afinado**: `concurrency=2`, `prefetch=1`, `max-tasks-per-child=50` y
   `max_memory_per_child≈300MB` (recicla el proceso y libera RAM).

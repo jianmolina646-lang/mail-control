@@ -3,8 +3,9 @@
 Claves anti-OOM:
 - worker_concurrency=2 (procesos), prefetch=1: nunca hay más de 2 chunks en RAM.
 - Cada chunk procesa IMAP_CHUNK_SIZE cuentas en serie, abriendo y cerrando
-  cada conexión IMAP. Un semáforo distribuido en Redis limita las conexiones
-  IMAP concurrentes de TODO el sistema a IMAP_MAX_CONCURRENCY (50).
+  cada conexión IMAP. Con chunks de 3, los dos procesos trabajan en paralelo
+  sin exceder la memoria disponible. Un semáforo distribuido limita además
+  las conexiones IMAP concurrentes de todo el sistema.
 - worker_max_tasks_per_child recicla el proceso cada 50 tareas (libera RAM).
 """
 
