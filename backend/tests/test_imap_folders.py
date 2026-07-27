@@ -1,6 +1,6 @@
 import unittest
 
-from app.services.imap_service import _received_folders
+from app.services.imap_service import _fetch_selected_folder, _received_folders
 
 
 class FakeServer:
@@ -21,4 +21,25 @@ class ReceivedFoldersTests(unittest.TestCase):
         self.assertEqual(
             _received_folders(FakeServer()),
             ["[Gmail]/Spam", "Streaming"],
+        )
+
+    def test_incremental_fetch_skips_uids_already_stored(self):
+        class IncrementalServer:
+            def select_folder(self, *_args, **_kwargs):
+                return None
+
+            def search(self, *_args, **_kwargs):
+                return [10, 11]
+
+            def fetch(self, *_args, **_kwargs):
+                raise AssertionError("No debe descargar mensajes ya almacenados")
+
+        self.assertEqual(
+            _fetch_selected_folder(
+                IncrementalServer(),
+                "INBOX",
+                100,
+                {"10", "11"},
+            ),
+            [],
         )

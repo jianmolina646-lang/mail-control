@@ -47,4 +47,8 @@ celery_app.conf.beat_schedule = {
         "task": "app.workers.tasks.send_telegram_daily_summary",
         "schedule": crontab(hour=13, minute=0),
     },
+    "monitor-system-health": {
+        "task": "app.workers.tasks.monitor_system_health",
+        "schedule": 5 * 60.0,
+    },
 }

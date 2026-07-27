@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     TELEGRAM_NOTIFY_ALERTS: bool = True
     TELEGRAM_NOTIFY_ACCOUNT_ERRORS: bool = True
     TELEGRAM_DAILY_SUMMARY: bool = True
+    TELEGRAM_SYSTEM_MONITORING: bool = True
+    SYSTEM_DISK_ALERT_PERCENT: int = 80
+    SYSTEM_MEMORY_ALERT_PERCENT: int = 90
+    SYSTEM_QUEUE_ALERT_SIZE: int = 50
 
     # --- Encriptación de credenciales IMAP (Fernet, base64 de 32 bytes) ---
     CREDENTIALS_ENCRYPTION_KEY: str = ""

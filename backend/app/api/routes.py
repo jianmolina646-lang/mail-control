@@ -172,8 +172,8 @@ def create_account(
     
     # Dispara sincronización automática inmediatamente
     if not is_microsoft:
-        from ..workers.tasks import scan_account_chunk
-        scan_account_chunk.delay([acct.id])
+        from ..workers.tasks import queue_account_sync
+        queue_account_sync(acct.id)
     
     return acct
 
@@ -263,8 +263,8 @@ def microsoft_callback(
         acct.last_status = "pending"
         acct.last_error = ""
         db.commit()
-        from ..workers.tasks import scan_account_chunk
-        scan_account_chunk.delay([acct.id])
+        from ..workers.tasks import queue_account_sync
+        queue_account_sync(acct.id)
         return RedirectResponse(f"{redirect_base}?oauth=connected")
     except Exception as exc:
         db.rollback()
@@ -321,10 +321,9 @@ def sync_account_now(
 ):
     if not db.get(MailAccount, account_id):
         raise HTTPException(status_code=404, detail="Casilla no encontrada")
-    from ..workers.tasks import scan_account_chunk
+    from ..workers.tasks import queue_account_sync
 
-    scan_account_chunk.delay([account_id])
-    return {"queued": True}
+    return {"queued": queue_account_sync(account_id)}
 
 
 # --- Mensajes (visor masivo) ---

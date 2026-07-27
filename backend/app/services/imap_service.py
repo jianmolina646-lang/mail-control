@@ -308,6 +308,7 @@ def _fetch_selected_folder(
     server: IMAPClient,
     folder_name: str,
     limit: int,
+    known_uids: set[str] | None = None,
 ) -> list[ParsedMessage]:
     """Selecciona y descarga los mensajes recientes de una carpeta."""
     server.select_folder(folder_name, readonly=True)
@@ -318,6 +319,11 @@ def _fetch_selected_folder(
         len(uids) if uids else 0,
     )
     if not uids:
+        return []
+    if known_uids:
+        uids = [uid for uid in uids if str(uid) not in known_uids]
+    if not uids:
+        logger.debug("No hay mensajes nuevos en carpeta %s", folder_name)
         return []
 
     response = server.fetch(
@@ -375,11 +381,19 @@ def _fetch_selected_folder(
 def _fetch_other_received_folders(
     server: IMAPClient,
     limit: int,
+    known_uids_by_folder: dict[str, set[str]] | None = None,
 ) -> list[ParsedMessage]:
     results: list[ParsedMessage] = []
     for folder_name in _received_folders(server):
         try:
-            results.extend(_fetch_selected_folder(server, folder_name, limit))
+            results.extend(
+                _fetch_selected_folder(
+                    server,
+                    folder_name,
+                    limit,
+                    (known_uids_by_folder or {}).get(folder_name),
+                )
+            )
         except Exception as exc:
             logger.warning(
                 "No se pudo sincronizar la carpeta %s: %s",
@@ -400,6 +414,7 @@ def fetch_recent(
     limit: int | None = None,
     *,
     include_other_folders: bool = True,
+    known_uids_by_folder: dict[str, set[str]] | None = None,
 ) -> list[ParsedMessage]:
     """Trae los últimos limit correos de la casilla. Abre y cierra la conexión.
     account debe exponer imap_host, imap_port, imap_user, email y una property
@@ -437,14 +452,28 @@ def fetch_recent(
         if not uids:
             logger.info("INBOX vacía para %s", username)
             if include_other_folders:
-                results.extend(_fetch_other_received_folders(server, limit))
+                results.extend(
+                    _fetch_other_received_folders(
+                        server,
+                        limit,
+                        known_uids_by_folder,
+                    )
+                )
             return results
         
-        # Traer los últimos N correos
+        known_inbox_uids = (known_uids_by_folder or {}).get("INBOX", set())
+        if known_inbox_uids:
+            uids = [uid for uid in uids if str(uid) not in known_inbox_uids]
+
+        # Traer los últimos N correos nuevos.
         uids = sorted(uids)[-limit:]
         logger.debug("Trayendo últimos %d correos (UIDs: %s...%s)", len(uids), uids[0] if uids else "?", uids[-1] if uids else "?")
         
-        response = server.fetch(uids, ["BODY.PEEK[]", "INTERNALDATE"])
+        response = (
+            server.fetch(uids, ["BODY.PEEK[]", "INTERNALDATE"])
+            if uids
+            else {}
+        )
         logger.debug("Fetch completado: %d respuestas", len(response) if response else 0)
         
         for uid, data in response.items():
@@ -494,7 +523,13 @@ def fetch_recent(
             )
 
         if include_other_folders:
-            results.extend(_fetch_other_received_folders(server, limit))
+            results.extend(
+                _fetch_other_received_folders(
+                    server,
+                    limit,
+                    known_uids_by_folder,
+                )
+            )
     
     logger.info("fetch_recent completado para %s: %d correos parseados", username, len(results))
     return results

@@ -327,9 +327,9 @@ def _queue_sync(account_id: int) -> str:
         email = account.email
     finally:
         db.close()
-    from .workers.tasks import scan_account_chunk
+    from .workers.tasks import queue_account_sync
 
-    scan_account_chunk.delay([account_id])
+    queue_account_sync(account_id)
     _audit("sync_account", str(account_id))
     return f"🔄 Sincronización programada para <code>{html.escape(_mask_email(email))}</code>."
 

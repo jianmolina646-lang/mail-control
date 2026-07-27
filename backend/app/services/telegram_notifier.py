@@ -130,3 +130,38 @@ def notify_account_error(*, account_id: int, email: str, error: str) -> None:
             }]]
         },
     )
+
+
+def notify_account_recovered(*, account_id: int, email: str) -> None:
+    if not settings.TELEGRAM_NOTIFY_ACCOUNT_ERRORS or not enabled():
+        return
+    _redis.delete(f"mailctl:telegram:account-error:{account_id}")
+    send_message(
+        "✅ <b>CUENTA RECUPERADA</b>\n\n"
+        f"<b>Cuenta:</b> <code>{html.escape(email)}</code>\n"
+        "La sincronización IMAP volvió a funcionar correctamente."
+    )
+
+
+def notify_system_health(*, issues: list[str]) -> None:
+    if not settings.TELEGRAM_SYSTEM_MONITORING or not enabled():
+        return
+    key = "mailctl:telegram:system-health"
+    if not issues:
+        if _redis.delete(key):
+            send_message(
+                "✅ <b>SISTEMA RECUPERADO</b>\n\n"
+                "Disco, memoria y cola de tareas volvieron a valores normales."
+            )
+        return
+    try:
+        if not _redis.set(key, "1", nx=True, ex=6 * 3600):
+            return
+    except Exception:
+        return
+    detail = "\n".join(f"• {html.escape(issue)}" for issue in issues)
+    send_message(
+        "⚠️ <b>ALERTA DEL VPS</b>\n\n"
+        f"{detail}\n\n"
+        "Mail Control seguirá operando y volverá a comprobarlo automáticamente."
+    )

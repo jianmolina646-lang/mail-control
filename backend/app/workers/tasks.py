@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import shutil
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -25,6 +26,7 @@ _redis = redis_lib.Redis.from_url(settings.REDIS_URL)
 _SEM_KEY = "mailctl:imap_semaphore"
 _SEM_TTL = 60 * 5  # si un worker muere, el slot se libera solo a los 5 min
 _ACCOUNT_LOCK_TTL = 60 * 12
+_PENDING_TTL = 60 * 30
 _RELEASE_LOCK_SCRIPT = """
 if redis.call("get", KEYS[1]) == ARGV[1] then
     return redis.call("del", KEYS[1])
@@ -75,6 +77,26 @@ class _AccountProxy:
         self.oauth_token = getattr(acct, "oauth_token", None)
 
 
+def _pending_key(account_id: int) -> str:
+    return f"mailctl:imap_pending:{account_id}"
+
+
+def queue_account_sync(account_id: int) -> bool:
+    """Encola una cuenta solo si no está pendiente o en ejecución."""
+    key = _pending_key(account_id)
+    if not _redis.set(key, "1", nx=True, ex=_PENDING_TTL):
+        return False
+    try:
+        scan_account_chunk.apply_async(
+            args=[[account_id]],
+            kwargs={"reserved": True},
+        )
+    except Exception:
+        _redis.delete(key)
+        raise
+    return True
+
+
 @celery_app.task(name="app.workers.tasks.scan_all_accounts")
 def scan_all_accounts() -> int:
     """Dispara el escaneo de todas las cuentas habilitadas, en chunks chicos."""
@@ -91,15 +113,38 @@ def scan_all_accounts() -> int:
     finally:
         db.close()
 
+    reserved_ids = [
+        account_id
+        for account_id in ids
+        if _redis.set(_pending_key(account_id), "1", nx=True, ex=_PENDING_TTL)
+    ]
     chunk = max(1, settings.IMAP_CHUNK_SIZE)
-    for i in range(0, len(ids), chunk):
-        scan_account_chunk.delay(ids[i : i + chunk])
-    logger.info("Programados %s chunks para %s cuentas", -(-len(ids) // chunk) if ids else 0, len(ids))
-    return len(ids)
+    for i in range(0, len(reserved_ids), chunk):
+        batch = reserved_ids[i : i + chunk]
+        try:
+            scan_account_chunk.apply_async(
+                args=[batch],
+                kwargs={"reserved": True},
+            )
+        except Exception:
+            for account_id in batch:
+                _redis.delete(_pending_key(account_id))
+            raise
+    logger.info(
+        "Programados %s chunks para %s cuentas; %s ya estaban pendientes",
+        -(-len(reserved_ids) // chunk) if reserved_ids else 0,
+        len(reserved_ids),
+        len(ids) - len(reserved_ids),
+    )
+    return len(reserved_ids)
 
 
 @celery_app.task(name="app.workers.tasks.scan_account_chunk", bind=True, max_retries=3)
-def scan_account_chunk(self, account_ids: list[int]) -> int:
+def scan_account_chunk(
+    self,
+    account_ids: list[int],
+    reserved: bool = False,
+) -> int:
     """Procesa un lote chico de cuentas EN SERIE (una conexión a la vez).
     
     Reintentos automáticos hasta 3 veces si hay errores transitorios (timeout, conexión perdida).
@@ -107,14 +152,22 @@ def scan_account_chunk(self, account_ids: list[int]) -> int:
     try:
         processed = 0
         for account_id in account_ids:
-            with imap_slot(account_id) as ok:
-                if not ok:
-                    # Otro worker ya procesa esta cuenta, o no hay capacidad.
-                    # El siguiente ciclo periódico volverá a considerarla.
-                    logger.info("Sincronización duplicada omitida para cuenta %s", account_id)
-                    continue
-                _sync_one_account(account_id)
-                processed += 1
+            pending_key = _pending_key(account_id)
+            owns_pending = reserved or bool(
+                _redis.set(pending_key, "1", nx=True, ex=_PENDING_TTL)
+            )
+            if not owns_pending:
+                logger.info("Tarea duplicada descartada para cuenta %s", account_id)
+                continue
+            try:
+                with imap_slot(account_id) as ok:
+                    if not ok:
+                        logger.info("Sincronización duplicada omitida para cuenta %s", account_id)
+                        continue
+                    _sync_one_account(account_id)
+                    processed += 1
+            finally:
+                _redis.delete(pending_key)
         return processed
     except Exception as exc:
         # Reintentar con delay exponencial si hay errores transitorios
@@ -147,7 +200,17 @@ def _sync_one_account(account_id: int, *, urgent: bool = False) -> None:
         if not acct or not acct.is_enabled:
             logger.debug("Cuenta %s no encontrada o deshabilitada", account_id)
             return
-        
+
+        was_error = acct.last_status == "error"
+        existing_rows = db.execute(
+            select(Message.folder_name, Message.uid)
+            .where(Message.account_id == acct.id)
+        ).all()
+        existing = {(row[0], row[1]) for row in existing_rows}
+        known_uids_by_folder: dict[str, set[str]] = {}
+        for folder_name, uid in existing_rows:
+            known_uids_by_folder.setdefault(folder_name, set()).add(uid)
+
         logger.info("Sincronizando cuenta: %s (%s:%d)", acct.email, acct.imap_host, acct.imap_port)
         try:
             if imap_service.is_microsoft_account(acct.imap_user, acct.imap_host):
@@ -158,6 +221,7 @@ def _sync_one_account(account_id: int, *, urgent: bool = False) -> None:
                 _AccountProxy(acct),
                 limit=10 if urgent else None,
                 include_other_folders=not urgent,
+                known_uids_by_folder=known_uids_by_folder,
             )
             logger.info("IMAP fetch_recent: %d correos traídos de %s", len(parsed), acct.email)
         except Exception as exc:
@@ -173,13 +237,6 @@ def _sync_one_account(account_id: int, *, urgent: bool = False) -> None:
             logger.error("IMAP error en %s: %s (tipo: %s)", acct.email, exc, type(exc).__name__, exc_info=True)
             return
 
-        existing = {
-            (row[0], row[1])
-            for row in db.execute(
-                select(Message.folder_name, Message.uid)
-                .where(Message.account_id == acct.id)
-            ).all()
-        }
         existing_message_ids = {
             row[0]
             for row in db.execute(
@@ -269,6 +326,11 @@ def _sync_one_account(account_id: int, *, urgent: bool = False) -> None:
         acct.last_error = ""
         acct.last_synced_at = datetime.now(timezone.utc)
         db.commit()
+        if was_error:
+            telegram_notifier.notify_account_recovered(
+                account_id=acct.id,
+                email=acct.email,
+            )
         
         logger.info("✓ Sincronización exitosa de %s: %d nuevos correos, %d alertas", 
                    acct.email, new_messages, new_alerts)
@@ -385,3 +447,34 @@ def send_telegram_daily_summary() -> int:
         },
     )
     return int(sent)
+
+
+def _memory_percent() -> int:
+    try:
+        with open("/sys/fs/cgroup/memory.current", encoding="utf-8") as handle:
+            current = int(handle.read())
+        with open("/sys/fs/cgroup/memory.max", encoding="utf-8") as handle:
+            maximum_text = handle.read().strip()
+        if maximum_text == "max":
+            return 0
+        maximum = int(maximum_text)
+        return round(current * 100 / maximum) if maximum else 0
+    except (OSError, ValueError):
+        return 0
+
+
+@celery_app.task(name="app.workers.tasks.monitor_system_health")
+def monitor_system_health() -> int:
+    issues: list[str] = []
+    disk = shutil.disk_usage("/")
+    disk_percent = round(disk.used * 100 / disk.total)
+    memory_percent = _memory_percent()
+    queue_size = _redis.llen("celery")
+    if disk_percent >= settings.SYSTEM_DISK_ALERT_PERCENT:
+        issues.append(f"Disco en {disk_percent}%")
+    if memory_percent >= settings.SYSTEM_MEMORY_ALERT_PERCENT:
+        issues.append(f"Memoria del contenedor en {memory_percent}%")
+    if queue_size >= settings.SYSTEM_QUEUE_ALERT_SIZE:
+        issues.append(f"Cola de tareas con {queue_size} pendientes")
+    telegram_notifier.notify_system_health(issues=issues)
+    return len(issues)
