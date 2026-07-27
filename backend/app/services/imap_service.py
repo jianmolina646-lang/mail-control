@@ -277,7 +277,16 @@ def _login_server(server: IMAPClient, username: str, password: str, account=None
 
 
 _EXCLUDED_FOLDER_FLAGS = {
-    "\\noselect", "\\sent", "\\drafts", "\\trash", "\\deleted",
+    "\\noselect",
+    "\\sent",
+    "\\drafts",
+    "\\trash",
+    "\\deleted",
+    "\\all",
+    "\\important",
+    "\\junk",
+    "\\spam",
+    "\\flagged",
 }
 
 
@@ -379,6 +388,12 @@ def _fetch_other_received_folders(
                 folder_name,
                 exc,
             )
+            error = str(exc).lower()
+            if "timed out" in error or "timeout" in error:
+                logger.info(
+                    "Se detiene el recorrido de carpetas porque la conexión IMAP expiró"
+                )
+                break
     return results
 
 

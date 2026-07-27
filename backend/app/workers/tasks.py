@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
@@ -23,14 +24,31 @@ _redis = redis_lib.Redis.from_url(settings.REDIS_URL)
 # --- Semáforo distribuido: máximo IMAP_MAX_CONCURRENCY conexiones en total ---
 _SEM_KEY = "mailctl:imap_semaphore"
 _SEM_TTL = 60 * 5  # si un worker muere, el slot se libera solo a los 5 min
+_ACCOUNT_LOCK_TTL = 60 * 12
+_RELEASE_LOCK_SCRIPT = """
+if redis.call("get", KEYS[1]) == ARGV[1] then
+    return redis.call("del", KEYS[1])
+end
+return 0
+"""
 
 
 @contextmanager
 def imap_slot(account_id: int):
-    """Reserva un slot del semáforo global de conexiones IMAP."""
-    member = f"acct:{account_id}"
+    """Reserva un slot global y un bloqueo exclusivo por cuenta."""
+    token = uuid.uuid4().hex
+    account_key = f"mailctl:imap_account_lock:{account_id}"
+    member = f"acct:{account_id}:{token}"
+    account_locked = False
     acquired = False
     try:
+        account_locked = bool(
+            _redis.set(account_key, token, nx=True, ex=_ACCOUNT_LOCK_TTL)
+        )
+        if not account_locked:
+            yield False
+            return
+
         # Limpia slots viejos (crash de workers) y trata de reservar.
         now = datetime.now(timezone.utc).timestamp()
         _redis.zremrangebyscore(_SEM_KEY, 0, now - _SEM_TTL)
@@ -41,6 +59,8 @@ def imap_slot(account_id: int):
     finally:
         if acquired:
             _redis.zrem(_SEM_KEY, member)
+        if account_locked:
+            _redis.eval(_RELEASE_LOCK_SCRIPT, 1, account_key, token)
 
 
 class _AccountProxy:
@@ -89,9 +109,9 @@ def scan_account_chunk(self, account_ids: list[int]) -> int:
         for account_id in account_ids:
             with imap_slot(account_id) as ok:
                 if not ok:
-                    # Semáforo lleno: reintentar este resto más tarde.
-                    logger.warning("Semáforo IMAP lleno; re-encolando cuenta %s", account_id)
-                    scan_account_chunk.apply_async(args=[[account_id]], countdown=60)
+                    # Otro worker ya procesa esta cuenta, o no hay capacidad.
+                    # El siguiente ciclo periódico volverá a considerarla.
+                    logger.info("Sincronización duplicada omitida para cuenta %s", account_id)
                     continue
                 _sync_one_account(account_id)
                 processed += 1
@@ -114,7 +134,7 @@ def scan_account_for_codes(account_id: int) -> int:
     """Sincronización prioritaria: solo 10 mensajes recientes de INBOX."""
     with imap_slot(account_id) as ok:
         if not ok:
-            scan_account_for_codes.apply_async(args=[account_id], countdown=3, priority=9)
+            logger.info("Sincronización urgente duplicada omitida para cuenta %s", account_id)
             return 0
         _sync_one_account(account_id, urgent=True)
         return 1
