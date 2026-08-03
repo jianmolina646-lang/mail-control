@@ -99,6 +99,12 @@ services:
     restart: unless-stopped
     env_file: .env
     command: python -m app.telegram_bot
+    environment:
+      ENTERPRISE_DATABASE_URL: ${ENTERPRISE_DATABASE_URL:-postgresql://mail_control:mail_control@mail-control-enterprise-postgres-1:5432/mail_control}
+      ENTERPRISE_RABBITMQ_URL: ${ENTERPRISE_RABBITMQ_URL:-amqp://mail_control:mail_control@mail-control-enterprise-rabbitmq-1:5672/}
+    networks:
+      - default
+      - mail_control_enterprise
     depends_on:
       db:
         condition: service_healthy
@@ -174,3 +180,8 @@ volumes:
   pgdata:
   backup_data:
   mega_session:
+
+networks:
+  mail_control_enterprise:
+    external: true
+    name: mail-control-enterprise_default
