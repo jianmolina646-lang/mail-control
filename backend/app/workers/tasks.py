@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 
 import redis as redis_lib
 from sqlalchemy import delete, func, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from ..core.config import settings
 from ..core.crypto import decrypt
@@ -349,25 +350,42 @@ def _sync_one_account(account_id: int, *, urgent: bool = False) -> None:
                 pm.from_addr, pm.subject, pm.body_text
             )
             is_alert = classification.is_alert
-            msg = Message(
-                account_id=acct.id,
-                uid=pm.uid,
-                folder_name=pm.folder_name,
-                message_id=pm.message_id,
-                from_addr=pm.from_addr,
-                from_name=pm.from_name,
-                to_addr=pm.to_addr,
-                subject=pm.subject,
-                snippet=pm.snippet,
-                body_text=pm.body_text,
-                body_html=pm.body_html,
-                received_at=pm.received_at,
-                is_alert=is_alert,
-                sender_trusted=classification.sender_trusted,
-                security_warning=classification.security_warning,
+            insert_result = db.execute(
+                pg_insert(Message)
+                .values(
+                    account_id=acct.id,
+                    uid=pm.uid,
+                    folder_name=pm.folder_name,
+                    message_id=pm.message_id,
+                    from_addr=pm.from_addr,
+                    from_name=pm.from_name,
+                    to_addr=pm.to_addr,
+                    subject=pm.subject,
+                    snippet=pm.snippet,
+                    body_text=pm.body_text,
+                    body_html=pm.body_html,
+                    received_at=pm.received_at,
+                    is_alert=is_alert,
+                    sender_trusted=classification.sender_trusted,
+                    security_warning=classification.security_warning,
+                )
+                .on_conflict_do_nothing()
+                .returning(Message.id)
             )
-            db.add(msg)
-            db.flush()
+            inserted_id = insert_result.scalar_one_or_none()
+            if inserted_id is None:
+                logger.debug(
+                    "Mensaje %s/%s insertado por otra sincronización, saltando",
+                    pm.folder_name,
+                    pm.uid,
+                )
+                existing.add(message_key)
+                if pm.message_id:
+                    existing_message_ids.add(pm.message_id)
+                continue
+            msg = db.get(Message, inserted_id)
+            if msg is None:
+                raise RuntimeError("No se pudo recuperar el mensaje recién insertado")
             existing.add(message_key)
             if pm.message_id:
                 existing_message_ids.add(pm.message_id)

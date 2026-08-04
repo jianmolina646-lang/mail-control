@@ -111,6 +111,13 @@ class Message(Base):
             postgresql_using="gin",
             postgresql_ops={"from_name": "gin_trgm_ops"},
         ),
+        Index(
+            "uq_messages_account_message_id_nonempty",
+            "account_id",
+            "message_id",
+            unique=True,
+            postgresql_where=text("message_id <> ''"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
