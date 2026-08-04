@@ -20,6 +20,7 @@ from .core.config import settings
 from .core.db import SessionLocal
 from .models.models import AgentCodeReceipt, Alert, MailAccount, Message, Subscription
 from .services.telegram_notifier import send_message
+from .services import enterprise_bridge
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("mail_control.telegram")
@@ -129,13 +130,28 @@ def _help() -> str:
 def _summary() -> tuple[str, dict]:
     db = SessionLocal()
     try:
-        accounts = db.scalar(select(func.count(MailAccount.id))) or 0
-        connected = db.scalar(
+        legacy_rows = db.scalars(select(MailAccount)).all()
+        enterprise_rows = enterprise_bridge.accounts()
+        enterprise_emails = {str(item["email"]).casefold() for item in enterprise_rows}
+        accounts = len(enterprise_rows) + sum(
+            item.email.casefold() not in enterprise_emails for item in legacy_rows
+        )
+        legacy_connected = db.scalar(
             select(func.count(MailAccount.id)).where(MailAccount.last_status == "ok")
         ) or 0
-        errors = db.scalar(
+        legacy_errors = db.scalar(
             select(func.count(MailAccount.id)).where(MailAccount.last_status == "error")
         ) or 0
+        connected = sum(str(item["status"]).upper() == "CONNECTED" for item in enterprise_rows)
+        connected += sum(
+            item.last_status == "ok" and item.email.casefold() not in enterprise_emails
+            for item in legacy_rows
+        )
+        errors = sum(str(item["status"]).upper() == "ERROR" for item in enterprise_rows)
+        errors += sum(
+            item.last_status == "error" and item.email.casefold() not in enterprise_emails
+            for item in legacy_rows
+        )
         open_alerts = db.scalar(
             select(func.count(Alert.id)).where(Alert.resolved.is_(False))
         ) or 0
@@ -309,27 +325,47 @@ def _accounts(page: int = 0) -> tuple[str, dict]:
     page = max(0, page)
     db = SessionLocal()
     try:
-        total = db.scalar(select(func.count(MailAccount.id))) or 0
-        rows = db.scalars(
-            select(MailAccount)
-            .order_by(MailAccount.email)
-            .offset(page * _PAGE_SIZE)
-            .limit(_PAGE_SIZE)
-        ).all()
+        enterprise = enterprise_bridge.accounts()
+        enterprise_emails = {str(item["email"]).casefold() for item in enterprise}
+        legacy = [
+            item for item in db.scalars(select(MailAccount).order_by(MailAccount.email)).all()
+            if item.email.casefold() not in enterprise_emails
+        ]
+        combined: list[tuple[str, object]] = [
+            ("enterprise", item) for item in enterprise
+        ] + [("legacy", item) for item in legacy]
+        combined.sort(key=lambda item: str(item[1]["email"] if item[0] == "enterprise" else item[1].email).casefold())
+        total = len(combined)
+        rows = combined[page * _PAGE_SIZE:(page + 1) * _PAGE_SIZE]
         lines = ["📬 <b>CUENTAS CONECTADAS</b>\n━━━━━━━━━━━━━━━━━━━━", f"\nTotal supervisado: <b>{total}</b>"]
         buttons: list[list[dict[str, str]]] = []
-        for account in rows:
-            icon = "✅" if account.last_status == "ok" else "⚠️"
-            oauth = " · OAuth2" if account.auth_method == "oauth2" else ""
-            lines.append(
-                f"\n{icon} <code>{html.escape(_mask_email(account.email))}</code>\n"
-                f"   {html.escape(account.provider)}{oauth} · {html.escape(account.last_status)}"
-            )
-            buttons.append([{
-                "text": f"🔄 Sincronizar {_mask_email(account.email)}",
-                "callback_data": f"sync:{account.id}",
-                "style": "success",
-            }])
+        for source, account in rows:
+            if source == "enterprise":
+                status = str(account["status"]).upper()
+                email_value = str(account["email"])
+                icon = "✅" if status == "CONNECTED" else "🔄" if status == "SYNCING" else "⚠️"
+                lines.append(
+                    f"\n{icon} <code>{html.escape(_mask_email(email_value))}</code>\n"
+                    f"   {html.escape(str(account['provider']))} · Enterprise · "
+                    f"{html.escape(status.lower())} · {account['message_count']} correos"
+                )
+                buttons.append([{
+                    "text": f"🔄 Sincronizar {_mask_email(email_value)}",
+                    "callback_data": f"esync:{account['id']}",
+                    "style": "success",
+                }])
+            else:
+                icon = "✅" if account.last_status == "ok" else "⚠️"
+                oauth = " · OAuth2" if account.auth_method == "oauth2" else ""
+                lines.append(
+                    f"\n{icon} <code>{html.escape(_mask_email(account.email))}</code>\n"
+                    f"   {html.escape(account.provider)}{oauth} · legado · {html.escape(account.last_status)}"
+                )
+                buttons.append([{
+                    "text": f"🔄 Sincronizar {_mask_email(account.email)}",
+                    "callback_data": f"sync:{account.id}",
+                    "style": "success",
+                }])
         navigation: list[dict[str, str]] = []
         if page > 0:
             navigation.append({"text": "◀️ Anterior", "callback_data": f"accounts:{page - 1}", "style": "primary"})
@@ -363,8 +399,15 @@ def _queue_sync_all() -> str:
     from .workers.tasks import scan_all_accounts
 
     scan_all_accounts.delay()
+    enterprise_count = enterprise_bridge.queue_all()
     _audit("sync_all")
-    return "🔄 Sincronización de todas las cuentas programada."
+    return f"🔄 Sincronización programada para todas las cuentas, incluidas {enterprise_count} de Enterprise."
+
+
+def _queue_enterprise_sync(account_id: str) -> str:
+    email_value = enterprise_bridge.queue_sync(account_id)
+    _audit("sync_enterprise", _mask_email(email_value))
+    return f"🔄 Sincronización Enterprise programada para <code>{html.escape(_mask_email(email_value))}</code>."
 
 
 def _find_account(email: str) -> tuple[MailAccount | None, list[Message]]:
@@ -392,7 +435,17 @@ def _find_account(email: str) -> tuple[MailAccount | None, list[Message]]:
 def _search(email: str) -> str:
     account, messages = _find_account(email)
     if not account:
-        return "❌ Esa cuenta no está registrada en Mail Control."
+        enterprise_messages = enterprise_bridge.recent_messages(email)
+        if not enterprise_messages:
+            return "❌ Esa cuenta no está registrada o todavía no tiene correos visibles."
+        lines = [f"🔎 <b>ÚLTIMOS CORREOS · ENTERPRISE</b>\n<code>{html.escape(_mask_email(email))}</code>"]
+        for message in enterprise_messages:
+            lines.append(
+                f"\n• <b>{html.escape(str(message.get('sender') or 'Sin remitente'))[:80]}</b>\n"
+                f"  {html.escape(str(message.get('subject') or 'Sin asunto'))[:120]}"
+            )
+        _audit("search_enterprise", _mask_email(email))
+        return "\n".join(lines)
     if not messages:
         return f"📭 No hay correos guardados para <code>{html.escape(_mask_email(email))}</code>."
     lines = [f"🔎 <b>ÚLTIMOS CORREOS</b>\n━━━━━━━━━━━━━━━━━━━━\n<code>{html.escape(_mask_email(email))}</code>"]
@@ -421,7 +474,14 @@ def _code(email: str) -> str:
             select(MailAccount).where(func.lower(MailAccount.email) == email.lower())
         )
         if not account:
-            return "❌ Esa cuenta no está registrada en Mail Control."
+            for message in enterprise_bridge.recent_messages(email, 10):
+                source = f"{message.get('subject') or ''}\n{message.get('snippet') or ''}"
+                for pattern in _CODE_PATTERNS:
+                    match = pattern.search(source)
+                    if match:
+                        _audit("read_enterprise_code", _mask_email(email))
+                        return f"🔐 <b>CÓDIGO ENTERPRISE</b>\n\nCuenta: <code>{html.escape(_mask_email(email))}</code>\nCódigo: <code>{match.group(1)}</code>"
+            return "⏳ No encontré un código reciente en esa cuenta Enterprise."
         cutoff = datetime.now(timezone.utc) - timedelta(minutes=15)
         messages = db.scalars(
             select(Message)
@@ -656,6 +716,8 @@ def _handle_callback(update: dict) -> None:
         _edit(callback, text, markup)
     elif data.startswith("sync:"):
         _edit(callback, _queue_sync(int(data.split(":")[1])))
+    elif data.startswith("esync:"):
+        _edit(callback, _queue_enterprise_sync(data.split(":", 1)[1]))
     elif data == "syncall:ask":
         _edit(
             callback,
