@@ -3,7 +3,7 @@ import email
 import logging
 from email.header import decode_header, make_header
 from email.utils import parseaddr, parsedate_to_datetime
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 import ssl
 import time
@@ -309,10 +309,11 @@ def _fetch_selected_folder(
     folder_name: str,
     limit: int,
     known_uids: set[str] | None = None,
+    since_date=None,
 ) -> list[ParsedMessage]:
     """Selecciona y descarga los mensajes recientes de una carpeta."""
     server.select_folder(folder_name, readonly=True)
-    uids = server.search(["ALL"])
+    uids = server.search(["SINCE", since_date] if since_date else ["ALL"])
     logger.info(
         "Total de correos en carpeta %s: %d",
         folder_name,
@@ -382,6 +383,7 @@ def _fetch_other_received_folders(
     server: IMAPClient,
     limit: int,
     known_uids_by_folder: dict[str, set[str]] | None = None,
+    since_date=None,
 ) -> list[ParsedMessage]:
     results: list[ParsedMessage] = []
     for folder_name in _received_folders(server):
@@ -392,6 +394,7 @@ def _fetch_other_received_folders(
                     folder_name,
                     limit,
                     (known_uids_by_folder or {}).get(folder_name),
+                    since_date,
                 )
             )
         except Exception as exc:
@@ -421,6 +424,10 @@ def fetch_recent(
     password ya desencriptada. También puede exponer oauth_token u oauth_refresh_token.
     """
     limit = limit or getattr(settings, "IMAP_FETCH_LIMIT", 100)
+    since_date = (
+        datetime.now(timezone.utc)
+        - timedelta(days=getattr(settings, "MESSAGE_RETENTION_DAYS", 30))
+    ).date()
     timeout = getattr(settings, "IMAP_TIMEOUT", 15)
     results: list[ParsedMessage] = []
     username = get_imap_username(account)
@@ -446,7 +453,7 @@ def fetch_recent(
         server.select_folder("INBOX", readonly=True)
         logger.debug("Carpeta INBOX seleccionada (readonly)")
         
-        uids = server.search(["ALL"])
+        uids = server.search(["SINCE", since_date])
         logger.info("Total de correos en INBOX: %d", len(uids) if uids else 0)
         
         if not uids:
@@ -457,6 +464,7 @@ def fetch_recent(
                         server,
                         limit,
                         known_uids_by_folder,
+                        since_date,
                     )
                 )
             return results
@@ -527,7 +535,8 @@ def fetch_recent(
                 _fetch_other_received_folders(
                     server,
                     limit,
-                    known_uids_by_folder,
+                known_uids_by_folder,
+                since_date,
                 )
             )
     

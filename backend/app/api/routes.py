@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, Response
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.responses import RedirectResponse
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, tuple_
 from sqlalchemy.orm import Session, joinedload
 
 from ..core import crypto
@@ -455,6 +456,8 @@ def list_messages(
     account_id: int | None = None,
     q: str | None = None,
     only_alerts: bool = False,
+    before_received_at: datetime | None = None,
+    before_id: int | None = Query(None, ge=1),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -464,7 +467,7 @@ def list_messages(
     if only_alerts:
         query = query.filter(Message.is_alert.is_(True))
     if q:
-        like = f"%{q}%"
+        like = f"%{q.strip()}%"
         query = query.filter(
             or_(
                 Message.subject.ilike(like),
@@ -473,9 +476,20 @@ def list_messages(
             )
         )
     total = query.count()
+    if (before_received_at is None) != (before_id is None):
+        raise HTTPException(
+            status_code=400,
+            detail="before_received_at y before_id deben enviarse juntos",
+        )
+    using_cursor = before_received_at is not None and before_id is not None
+    if using_cursor:
+        query = query.filter(
+            tuple_(Message.received_at, Message.id)
+            < tuple_(before_received_at, before_id)
+        )
     items = (
-        query.order_by(Message.received_at.desc())
-        .offset((page - 1) * page_size)
+        query.order_by(Message.received_at.desc(), Message.id.desc())
+        .offset(0 if using_cursor else (page - 1) * page_size)
         .limit(page_size)
         .all()
     )

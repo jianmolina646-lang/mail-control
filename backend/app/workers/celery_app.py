@@ -43,6 +43,10 @@ celery_app.conf.beat_schedule = {
         "task": "app.workers.tasks.cleanup_old_messages",
         "schedule": crontab(hour=4, minute=30),
     },
+    "cleanup-old-sync-events": {
+        "task": "app.workers.tasks.cleanup_old_sync_events",
+        "schedule": crontab(hour=4, minute=40),
+    },
     # 13:00 UTC equivale a las 08:00 en America/Lima.
     "telegram-daily-summary": {
         "task": "app.workers.tasks.send_telegram_daily_summary",

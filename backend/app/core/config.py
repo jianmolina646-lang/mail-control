@@ -52,6 +52,10 @@ class Settings(BaseSettings):
     # --- DB / Redis ---
     DATABASE_URL: str = "postgresql+psycopg2://mailctl:mailctl@db:5432/mailctl"
     REDIS_URL: str = "redis://redis:6379/0"
+    DB_POOL_SIZE: int = 3
+    DB_MAX_OVERFLOW: int = 2
+    DB_STATEMENT_TIMEOUT_MS: int = 60_000
+    DB_IDLE_TRANSACTION_TIMEOUT_MS: int = 60_000
 
     # --- Admin inicial ---
     ADMIN_EMAIL: str = "admin@ecormecejhelizstore.com"
@@ -64,6 +68,8 @@ class Settings(BaseSettings):
     IMAP_CHUNK_SIZE: int = 3
     # Correos máximos a traer por cuenta en cada ciclo (AUMENTADO para ver más historia).
     IMAP_FETCH_LIMIT: int = 100
+    MESSAGE_RETENTION_DAYS: int = 30
+    SYNC_EVENT_RETENTION_DAYS: int = 90
     # Timeout de conexión IMAP en segundos (reducido para no bloquear workers).
     IMAP_TIMEOUT: int = 30
     IMAP_RETRY_ATTEMPTS: int = 2

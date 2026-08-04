@@ -19,6 +19,8 @@ services:
       -c effective_cache_size=256MB
       -c max_connections=40
       -c work_mem=4MB
+      -c shared_preload_libraries=pg_stat_statements
+      -c track_io_timing=on
     mem_limit: 512m
     mem_reservation: 256m
     healthcheck:
@@ -40,6 +42,17 @@ services:
       timeout: 5s
       retries: 3
 
+  migrate:
+    build: ./backend
+    command: alembic upgrade head
+    env_file: .env
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+    mem_limit: 192m
+    mem_reservation: 64m
+
   backend:
     build: ./backend
     restart: unless-stopped
@@ -47,6 +60,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_started
     mem_limit: 512m
@@ -66,6 +81,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_started
     mem_limit: 512m
@@ -83,6 +100,10 @@ services:
     env_file: .env
     command: celery -A app.workers.celery_app.celery_app beat --loglevel=info
     depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_started
     mem_limit: 128m
@@ -99,9 +120,17 @@ services:
     restart: unless-stopped
     env_file: .env
     command: python -m app.telegram_bot
+    environment:
+      ENTERPRISE_DATABASE_URL: ${ENTERPRISE_DATABASE_URL:-postgresql://mail_control:mail_control@mail-control-enterprise-postgres-1:5432/mail_control}
+      ENTERPRISE_RABBITMQ_URL: ${ENTERPRISE_RABBITMQ_URL:-amqp://mail_control:mail_control@mail-control-enterprise-rabbitmq-1:5672/}
+    networks:
+      - default
+      - mail_control_enterprise
     depends_on:
       db:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_started
     mem_limit: 128m
@@ -174,3 +203,8 @@ volumes:
   pgdata:
   backup_data:
   mega_session:
+
+networks:
+  mail_control_enterprise:
+    external: true
+    name: mail-control-enterprise_default

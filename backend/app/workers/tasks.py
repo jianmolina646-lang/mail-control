@@ -261,9 +261,15 @@ def _sync_one_account(account_id: int, *, urgent: bool = False) -> None:
             return
 
         previous_failures = _consecutive_failures(db, acct.id)
+        message_cutoff = datetime.now(timezone.utc) - timedelta(
+            days=settings.MESSAGE_RETENTION_DAYS
+        )
         existing_rows = db.execute(
             select(Message.folder_name, Message.uid)
-            .where(Message.account_id == acct.id)
+            .where(
+                Message.account_id == acct.id,
+                Message.received_at >= message_cutoff,
+            )
         ).all()
         existing = {(row[0], row[1]) for row in existing_rows}
         known_uids_by_folder: dict[str, set[str]] = {}
@@ -314,6 +320,7 @@ def _sync_one_account(account_id: int, *, urgent: bool = False) -> None:
                 select(Message.message_id).where(
                     Message.account_id == acct.id,
                     Message.message_id != "",
+                    Message.received_at >= message_cutoff,
                 )
             ).all()
         }
@@ -419,9 +426,10 @@ def _sync_one_account(account_id: int, *, urgent: bool = False) -> None:
 
 
 @celery_app.task(name="app.workers.tasks.cleanup_old_messages")
-def cleanup_old_messages(days: int = 30) -> int:
+def cleanup_old_messages(days: int | None = None) -> int:
     """Borra correos de más de `days` días SIN alerta, para cuidar el disco."""
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    retention_days = days or settings.MESSAGE_RETENTION_DAYS
+    cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
     db = SessionLocal()
     try:
         result = db.execute(
@@ -430,6 +438,20 @@ def cleanup_old_messages(days: int = 30) -> int:
                 Message.is_alert.is_(False),
             )
         )
+        db.commit()
+        return result.rowcount or 0
+    finally:
+        db.close()
+
+
+@celery_app.task(name="app.workers.tasks.cleanup_old_sync_events")
+def cleanup_old_sync_events(days: int | None = None) -> int:
+    """Conserva un historial operativo acotado para evitar crecimiento ilimitado."""
+    retention_days = days or settings.SYNC_EVENT_RETENTION_DAYS
+    cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
+    db = SessionLocal()
+    try:
+        result = db.execute(delete(SyncEvent).where(SyncEvent.created_at < cutoff))
         db.commit()
         return result.rowcount or 0
     finally:

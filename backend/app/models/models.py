@@ -11,6 +11,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -84,8 +85,32 @@ class Message(Base):
             "account_id", "folder_name", "uid",
             name="uq_message_account_folder_uid",
         ),
-        Index("ix_message_account_received", "account_id", "received_at"),
-        Index("ix_message_received", "received_at"),
+        Index("ix_message_account_received_id", "account_id", "received_at", "id"),
+        Index("ix_message_received_id", "received_at", "id"),
+        Index(
+            "ix_messages_alert_received_id",
+            "received_at",
+            "id",
+            postgresql_where=text("is_alert"),
+        ),
+        Index(
+            "ix_messages_subject_trgm",
+            "subject",
+            postgresql_using="gin",
+            postgresql_ops={"subject": "gin_trgm_ops"},
+        ),
+        Index(
+            "ix_messages_from_addr_trgm",
+            "from_addr",
+            postgresql_using="gin",
+            postgresql_ops={"from_addr": "gin_trgm_ops"},
+        ),
+        Index(
+            "ix_messages_from_name_trgm",
+            "from_name",
+            postgresql_using="gin",
+            postgresql_ops={"from_name": "gin_trgm_ops"},
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -102,9 +127,9 @@ class Message(Base):
     snippet: Mapped[str] = mapped_column(String(500), default="")
     body_text: Mapped[str] = mapped_column(Text, default="")
     body_html: Mapped[str] = mapped_column(Text, default="")
-    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
-    is_alert: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
-    sender_trusted: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    is_alert: Mapped[bool] = mapped_column(Boolean, default=False)
+    sender_trusted: Mapped[bool] = mapped_column(Boolean, default=True)
     security_warning: Mapped[str] = mapped_column(String(500), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
@@ -121,6 +146,7 @@ class SyncEvent(Base):
     __table_args__ = (
         Index("ix_sync_event_account_created", "account_id", "created_at"),
         Index("ix_sync_event_status_created", "status", "created_at"),
+        Index("ix_sync_events_created_at", "created_at"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -147,7 +173,7 @@ class AgentCodeReceipt(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    job_id: Mapped[str] = mapped_column(String(36), index=True)
+    job_id: Mapped[str] = mapped_column(String(36))
     message_id: Mapped[int] = mapped_column(
         ForeignKey("messages.id", ondelete="CASCADE"), index=True
     )
@@ -192,7 +218,7 @@ class Subscription(Base):
     reason: Mapped[str] = mapped_column(String(255), default="")
     score: Mapped[int] = mapped_column(Integer, default=0)
     latest_message_id: Mapped[int | None] = mapped_column(
-        ForeignKey("messages.id", ondelete="SET NULL"), nullable=True
+        ForeignKey("messages.id", ondelete="SET NULL"), nullable=True, index=True
     )
     detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(
@@ -223,7 +249,7 @@ class SubscriptionEvent(Base):
         ForeignKey("subscriptions.id", ondelete="CASCADE"), index=True
     )
     message_id: Mapped[int | None] = mapped_column(
-        ForeignKey("messages.id", ondelete="SET NULL"), nullable=True
+        ForeignKey("messages.id", ondelete="SET NULL"), nullable=True, index=True
     )
     previous_status: Mapped[str] = mapped_column(String(30), default="unknown")
     status: Mapped[str] = mapped_column(String(30))
