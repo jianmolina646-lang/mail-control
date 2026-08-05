@@ -30,7 +30,7 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     hashed_password: Mapped[str] = mapped_column(String(255))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    is_admin: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
     totp_secret_encrypted: Mapped[str] = mapped_column(Text, default="")
     totp_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     recovery_code_hashes: Mapped[str] = mapped_column(Text, default="[]")
