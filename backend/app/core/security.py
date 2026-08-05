@@ -63,3 +63,18 @@ def get_current_user(
     if not user:
         raise credentials_exc
     return user
+
+
+def get_current_admin(user=Depends(get_current_user)):
+    """Restrict global mailbox data and mutations to administrators.
+
+    The legacy application is intentionally single-tenant: mail accounts and
+    messages have no owner column.  Authentication alone is therefore not an
+    authorization boundary; every data endpoint must require this dependency.
+    """
+    if not user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Se requieren permisos de administrador",
+        )
+    return user
