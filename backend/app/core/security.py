@@ -63,3 +63,13 @@ def get_current_user(
     if not user:
         raise credentials_exc
     return user
+
+
+def get_current_admin(user=Depends(get_current_user)):
+    """Restrict global mailbox data and mutations to administrators."""
+    if not user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Se requieren permisos de administrador",
+        )
+    return user

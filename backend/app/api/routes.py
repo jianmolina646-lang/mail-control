@@ -18,6 +18,7 @@ from ..core.db import get_db
 from ..core.login_limiter import clear_failures, is_blocked, register_failure
 from ..core.security import (
     create_access_token,
+    get_current_admin,
     get_current_user,
     hash_password,
     verify_password,
@@ -222,7 +223,7 @@ def change_password(
 @router.get("/sync-history", response_model=list[SyncEventOut])
 def sync_history(
     limit: int = Query(100, ge=1, le=500),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
     events = db.execute(
@@ -250,7 +251,7 @@ def sync_history(
 # --- Cuentas de correo ---
 @router.get("/accounts", response_model=list[MailAccountOut])
 def list_accounts(
-    user: User = Depends(get_current_user), db: Session = Depends(get_db)
+    user: User = Depends(get_current_admin), db: Session = Depends(get_db)
 ):
     return db.query(MailAccount).order_by(MailAccount.email).all()
 
@@ -258,7 +259,7 @@ def list_accounts(
 @router.post("/accounts", response_model=MailAccountOut, status_code=201)
 def create_account(
     data: MailAccountIn,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
     if db.query(MailAccount).filter(MailAccount.email == data.email).first():
@@ -304,7 +305,7 @@ def create_account(
 def update_account(
     account_id: int,
     data: MailAccountUpdate,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
     acct = db.get(MailAccount, account_id)
@@ -332,7 +333,7 @@ def update_account(
 @router.post("/accounts/{account_id}/microsoft/authorize")
 def authorize_microsoft_account(
     account_id: int,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
     acct = db.get(MailAccount, account_id)
@@ -398,7 +399,7 @@ def microsoft_callback(
 @router.delete("/accounts/{account_id}", status_code=204)
 def delete_account(
     account_id: int,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
     acct = db.get(MailAccount, account_id)
@@ -411,7 +412,7 @@ def delete_account(
 @router.post("/accounts/{account_id}/test")
 def test_account(
     account_id: int,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
     acct = db.get(MailAccount, account_id)
@@ -438,7 +439,7 @@ def test_account(
 @router.post("/accounts/{account_id}/sync")
 def sync_account_now(
     account_id: int,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
     if not db.get(MailAccount, account_id):
@@ -458,7 +459,7 @@ def list_messages(
     only_alerts: bool = False,
     before_received_at: datetime | None = None,
     before_id: int | None = Query(None, ge=1),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
     query = db.query(Message)
@@ -499,7 +500,7 @@ def list_messages(
 @router.get("/messages/{message_id}", response_model=MessageDetail)
 def get_message(
     message_id: int,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
     msg = db.get(Message, message_id)
@@ -514,7 +515,7 @@ def list_alerts(
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
     include_resolved: bool = False,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
     query = db.query(Alert).options(joinedload(Alert.message))
@@ -533,7 +534,7 @@ def list_alerts(
 @router.post("/alerts/{alert_id}/resolve")
 def resolve_alert(
     alert_id: int,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
     alert = db.get(Alert, alert_id)
@@ -566,7 +567,7 @@ def list_subscriptions(
     account_id: int | None = None,
     status: str | None = None,
     service: str | None = None,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
     query = db.query(Subscription).options(joinedload(Subscription.account))
@@ -584,7 +585,7 @@ def list_subscriptions(
 
 @router.get("/subscriptions/stats", response_model=SubscriptionStatsOut)
 def subscription_stats(
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
     counts = dict(
@@ -605,7 +606,7 @@ def subscription_stats(
 @router.get("/subscriptions/{subscription_id}", response_model=SubscriptionDetail)
 def get_subscription(
     subscription_id: int,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
     item = (
@@ -621,7 +622,7 @@ def get_subscription(
 
 @router.post("/subscriptions/rebuild")
 def rebuild_subscriptions(
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_admin),
 ):
     from ..workers.tasks import rebuild_subscription_states
 
@@ -631,7 +632,7 @@ def rebuild_subscriptions(
 
 # --- Stats del dashboard ---
 @router.get("/stats", response_model=StatsOut)
-def stats(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def stats(user: User = Depends(get_current_admin), db: Session = Depends(get_db)):
     accounts_total = db.scalar(select(func.count(MailAccount.id))) or 0
     accounts_ok = db.scalar(
         select(func.count(MailAccount.id)).where(MailAccount.last_status == "ok")
