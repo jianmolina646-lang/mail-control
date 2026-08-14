@@ -58,6 +58,20 @@ def recent_messages(email: str, limit: int = 8) -> list[dict]:
     )
 
 
+def message_count_since(since: datetime) -> int:
+    """Count non-deleted Enterprise messages received since ``since``."""
+    rows = _rows(
+        """
+        SELECT count(*)::int AS message_count
+        FROM email_messages
+        WHERE deleted_at IS NULL
+          AND coalesce(received_at, created_at) >= %s
+        """,
+        (since,),
+    )
+    return int(rows[0]["message_count"]) if rows else 0
+
+
 def queue_sync(account_id: str) -> str:
     selected = _rows(
         "SELECT id, tenant_id, provider::text AS provider, email FROM mail_accounts WHERE id=%s",

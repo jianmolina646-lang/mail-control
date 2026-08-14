@@ -83,10 +83,19 @@ openssl enc -aes-256-cbc -salt -pbkdf2 -iter 200000 \
     -out "$ARCHIVE" \
     -pass env:ARCHIVE_PASSWORD
 
-if ! mega-whoami >/dev/null 2>&1; then
+mega_session_ready=false
+for _attempt in 1 2 3 4 5; do
+    if mega-whoami >/dev/null 2>&1; then
+        mega_session_ready=true
+        break
+    fi
+    sleep 1
+done
+if [[ "$mega_session_ready" != "true" ]]; then
     : "${MEGA_EMAIL:?MEGA_EMAIL no configurado y no existe una sesión}"
     : "${MEGA_PASSWORD:?MEGA_PASSWORD no configurado y no existe una sesión}"
     mega-login "$MEGA_EMAIL" "$MEGA_PASSWORD"
+    mega-whoami >/dev/null
 fi
 
 mega-mkdir -p "$DAILY_FOLDER" >/dev/null 2>&1 || true

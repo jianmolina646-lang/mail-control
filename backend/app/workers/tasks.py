@@ -11,12 +11,13 @@ from datetime import datetime, timedelta, timezone
 
 import redis as redis_lib
 from sqlalchemy import delete, func, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from ..core.config import settings
 from ..core.crypto import decrypt
 from ..core.db import SessionLocal
 from ..models.models import Alert, MailAccount, Message, Subscription, SyncEvent
-from ..services import imap_service, radar, subscription_tracker, telegram_notifier
+from ..services import enterprise_bridge, imap_service, radar, subscription_tracker, telegram_notifier
 from .celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -261,9 +262,15 @@ def _sync_one_account(account_id: int, *, urgent: bool = False) -> None:
             return
 
         previous_failures = _consecutive_failures(db, acct.id)
+        message_cutoff = datetime.now(timezone.utc) - timedelta(
+            days=settings.MESSAGE_RETENTION_DAYS
+        )
         existing_rows = db.execute(
             select(Message.folder_name, Message.uid)
-            .where(Message.account_id == acct.id)
+            .where(
+                Message.account_id == acct.id,
+                Message.received_at >= message_cutoff,
+            )
         ).all()
         existing = {(row[0], row[1]) for row in existing_rows}
         known_uids_by_folder: dict[str, set[str]] = {}
@@ -314,6 +321,7 @@ def _sync_one_account(account_id: int, *, urgent: bool = False) -> None:
                 select(Message.message_id).where(
                     Message.account_id == acct.id,
                     Message.message_id != "",
+                    Message.received_at >= message_cutoff,
                 )
             ).all()
         }
@@ -342,25 +350,42 @@ def _sync_one_account(account_id: int, *, urgent: bool = False) -> None:
                 pm.from_addr, pm.subject, pm.body_text
             )
             is_alert = classification.is_alert
-            msg = Message(
-                account_id=acct.id,
-                uid=pm.uid,
-                folder_name=pm.folder_name,
-                message_id=pm.message_id,
-                from_addr=pm.from_addr,
-                from_name=pm.from_name,
-                to_addr=pm.to_addr,
-                subject=pm.subject,
-                snippet=pm.snippet,
-                body_text=pm.body_text,
-                body_html=pm.body_html,
-                received_at=pm.received_at,
-                is_alert=is_alert,
-                sender_trusted=classification.sender_trusted,
-                security_warning=classification.security_warning,
+            insert_result = db.execute(
+                pg_insert(Message)
+                .values(
+                    account_id=acct.id,
+                    uid=pm.uid,
+                    folder_name=pm.folder_name,
+                    message_id=pm.message_id,
+                    from_addr=pm.from_addr,
+                    from_name=pm.from_name,
+                    to_addr=pm.to_addr,
+                    subject=pm.subject,
+                    snippet=pm.snippet,
+                    body_text=pm.body_text,
+                    body_html=pm.body_html,
+                    received_at=pm.received_at,
+                    is_alert=is_alert,
+                    sender_trusted=classification.sender_trusted,
+                    security_warning=classification.security_warning,
+                )
+                .on_conflict_do_nothing()
+                .returning(Message.id)
             )
-            db.add(msg)
-            db.flush()
+            inserted_id = insert_result.scalar_one_or_none()
+            if inserted_id is None:
+                logger.debug(
+                    "Mensaje %s/%s insertado por otra sincronización, saltando",
+                    pm.folder_name,
+                    pm.uid,
+                )
+                existing.add(message_key)
+                if pm.message_id:
+                    existing_message_ids.add(pm.message_id)
+                continue
+            msg = db.get(Message, inserted_id)
+            if msg is None:
+                raise RuntimeError("No se pudo recuperar el mensaje recién insertado")
             existing.add(message_key)
             if pm.message_id:
                 existing_message_ids.add(pm.message_id)
@@ -419,9 +444,10 @@ def _sync_one_account(account_id: int, *, urgent: bool = False) -> None:
 
 
 @celery_app.task(name="app.workers.tasks.cleanup_old_messages")
-def cleanup_old_messages(days: int = 30) -> int:
+def cleanup_old_messages(days: int | None = None) -> int:
     """Borra correos de más de `days` días SIN alerta, para cuidar el disco."""
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    retention_days = days or settings.MESSAGE_RETENTION_DAYS
+    cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
     db = SessionLocal()
     try:
         result = db.execute(
@@ -430,6 +456,20 @@ def cleanup_old_messages(days: int = 30) -> int:
                 Message.is_alert.is_(False),
             )
         )
+        db.commit()
+        return result.rowcount or 0
+    finally:
+        db.close()
+
+
+@celery_app.task(name="app.workers.tasks.cleanup_old_sync_events")
+def cleanup_old_sync_events(days: int | None = None) -> int:
+    """Conserva un historial operativo acotado para evitar crecimiento ilimitado."""
+    retention_days = days or settings.SYNC_EVENT_RETENTION_DAYS
+    cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
+    db = SessionLocal()
+    try:
+        result = db.execute(delete(SyncEvent).where(SyncEvent.created_at < cutoff))
         db.commit()
         return result.rowcount or 0
     finally:
@@ -493,20 +533,37 @@ def send_telegram_daily_summary() -> int:
         return 0
     db = SessionLocal()
     try:
-        accounts = db.scalar(select(func.count(MailAccount.id))) or 0
-        connected = db.scalar(
-            select(func.count(MailAccount.id)).where(MailAccount.last_status == "ok")
-        ) or 0
-        errors = db.scalar(
-            select(func.count(MailAccount.id)).where(MailAccount.last_status == "error")
-        ) or 0
+        legacy_rows = db.scalars(select(MailAccount)).all()
+        enterprise_rows = enterprise_bridge.accounts()
+        enterprise_emails = {
+            str(item["email"]).casefold() for item in enterprise_rows
+        }
+        legacy_only = [
+            item for item in legacy_rows
+            if item.email.casefold() not in enterprise_emails
+        ]
+        accounts = len(enterprise_rows) + len(legacy_only)
+        connected = sum(
+            str(item["status"]).upper() == "CONNECTED"
+            for item in enterprise_rows
+        ) + sum(item.last_status == "ok" for item in legacy_only)
+        errors = sum(
+            str(item["status"]).upper() == "ERROR"
+            for item in enterprise_rows
+        ) + sum(item.last_status == "error" for item in legacy_only)
         alerts = db.scalar(
             select(func.count(Alert.id)).where(Alert.resolved.is_(False))
         ) or 0
         since = datetime.now(timezone.utc) - timedelta(hours=24)
-        messages = db.scalar(
-            select(func.count(Message.id)).where(Message.received_at >= since)
-        ) or 0
+        legacy_messages_query = select(func.count(Message.id)).where(
+            Message.received_at >= since
+        )
+        if enterprise_emails:
+            legacy_messages_query = legacy_messages_query.join(MailAccount).where(
+                func.lower(MailAccount.email).not_in(enterprise_emails)
+            )
+        legacy_messages = db.scalar(legacy_messages_query) or 0
+        messages = enterprise_bridge.message_count_since(since) + legacy_messages
     finally:
         db.close()
     sent = telegram_notifier.send_message(
