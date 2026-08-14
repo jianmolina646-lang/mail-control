@@ -162,6 +162,9 @@ services:
     mem_reservation: 64m
 
   frontend:
+    # El panel público actual lo sirve Mail Control Enterprise en el puerto 8081.
+    # Este frontend queda disponible solo para recuperación/uso Legacy explícito.
+    profiles: ["legacy-frontend"]
     build: ./frontend
     restart: unless-stopped
     depends_on:
