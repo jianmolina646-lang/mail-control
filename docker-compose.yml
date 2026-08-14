@@ -76,8 +76,13 @@ services:
   worker:
     build: ./backend
     restart: unless-stopped
+    # Celery no necesita privilegios de root ni escribir en /app.
+    user: "65534:65534"
     env_file: .env
     command: celery -A app.workers.celery_app.celery_app worker --loglevel=info --concurrency=2 --max-tasks-per-child=50
+    networks:
+      - default
+      - mail_control_enterprise
     depends_on:
       db:
         condition: service_healthy

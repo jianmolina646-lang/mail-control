@@ -17,7 +17,7 @@ from ..core.config import settings
 from ..core.crypto import decrypt
 from ..core.db import SessionLocal
 from ..models.models import Alert, MailAccount, Message, Subscription, SyncEvent
-from ..services import imap_service, radar, subscription_tracker, telegram_notifier
+from ..services import enterprise_bridge, imap_service, radar, subscription_tracker, telegram_notifier
 from .celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -533,20 +533,37 @@ def send_telegram_daily_summary() -> int:
         return 0
     db = SessionLocal()
     try:
-        accounts = db.scalar(select(func.count(MailAccount.id))) or 0
-        connected = db.scalar(
-            select(func.count(MailAccount.id)).where(MailAccount.last_status == "ok")
-        ) or 0
-        errors = db.scalar(
-            select(func.count(MailAccount.id)).where(MailAccount.last_status == "error")
-        ) or 0
+        legacy_rows = db.scalars(select(MailAccount)).all()
+        enterprise_rows = enterprise_bridge.accounts()
+        enterprise_emails = {
+            str(item["email"]).casefold() for item in enterprise_rows
+        }
+        legacy_only = [
+            item for item in legacy_rows
+            if item.email.casefold() not in enterprise_emails
+        ]
+        accounts = len(enterprise_rows) + len(legacy_only)
+        connected = sum(
+            str(item["status"]).upper() == "CONNECTED"
+            for item in enterprise_rows
+        ) + sum(item.last_status == "ok" for item in legacy_only)
+        errors = sum(
+            str(item["status"]).upper() == "ERROR"
+            for item in enterprise_rows
+        ) + sum(item.last_status == "error" for item in legacy_only)
         alerts = db.scalar(
             select(func.count(Alert.id)).where(Alert.resolved.is_(False))
         ) or 0
         since = datetime.now(timezone.utc) - timedelta(hours=24)
-        messages = db.scalar(
-            select(func.count(Message.id)).where(Message.received_at >= since)
-        ) or 0
+        legacy_messages_query = select(func.count(Message.id)).where(
+            Message.received_at >= since
+        )
+        if enterprise_emails:
+            legacy_messages_query = legacy_messages_query.join(MailAccount).where(
+                func.lower(MailAccount.email).not_in(enterprise_emails)
+            )
+        legacy_messages = db.scalar(legacy_messages_query) or 0
+        messages = enterprise_bridge.message_count_since(since) + legacy_messages
     finally:
         db.close()
     sent = telegram_notifier.send_message(
