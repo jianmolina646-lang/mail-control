@@ -7,7 +7,7 @@ from datetime import datetime
 
 import redis
 from fastapi import APIRouter, Depends, Header, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -21,9 +21,9 @@ _redis = redis.Redis.from_url(settings.REDIS_URL)
 
 
 class CodeRequest(BaseModel):
-    job_id: str = Field(min_length=36, max_length=36)
-    account_email: str = Field(min_length=3, max_length=255)
-    service: str = Field(min_length=2, max_length=32)
+    job_id: str = Field(pattern=r"^[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$")
+    account_email: EmailStr
+    service: str = Field(min_length=2, max_length=32, pattern=r"^[A-Za-z0-9_-]+$")
     not_before: datetime
 
 
