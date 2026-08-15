@@ -2,7 +2,9 @@
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 
 # --- Auth ---
@@ -13,25 +15,25 @@ class Token(BaseModel):
 
 class LoginIn(BaseModel):
     email: EmailStr
-    password: str
+    password: str = Field(min_length=1, max_length=128)
 
 
 class ChangePasswordIn(BaseModel):
-    current_password: str
+    current_password: str = Field(min_length=1, max_length=128)
     new_password: str = Field(..., min_length=8, max_length=128)
 
 
 class TwoFactorSetupIn(BaseModel):
-    current_password: str
+    current_password: str = Field(min_length=1, max_length=128)
 
 
 class TwoFactorConfirmIn(BaseModel):
-    code: str = Field(..., min_length=6, max_length=32)
+    code: str = Field(pattern=r"^\d{6}$")
 
 
 class TwoFactorDisableIn(BaseModel):
-    current_password: str
-    code: str = Field(..., min_length=6, max_length=32)
+    current_password: str = Field(min_length=1, max_length=128)
+    code: str = Field(pattern=r"^\d{6}$")
 
 
 class UserOut(BaseModel):
@@ -58,21 +60,41 @@ class SyncEventOut(BaseModel):
 # --- Cuentas de correo ---
 class MailAccountIn(BaseModel):
     email: EmailStr
-    provider: str = "custom"
-    imap_host: str
-    imap_port: int = 993
-    imap_user: str | None = None
+    provider: Literal["outlook", "hotmail", "gmail", "custom"] = "custom"
+    imap_host: str = Field(min_length=1, max_length=253)
+    imap_port: int = Field(default=993, ge=1, le=65535)
+    imap_user: str | None = Field(default=None, max_length=320)
     password: str | None = Field(
-        None, description="Solo para proveedores que todavía aceptan contraseña"
+        None,
+        min_length=1,
+        max_length=256,
+        description="Solo para proveedores que todavía aceptan contraseña",
     )
 
+    @field_validator("imap_host")
+    @classmethod
+    def normalize_host(cls, value: str) -> str:
+        host = value.strip().lower().rstrip(".")
+        if not host or any(character.isspace() for character in host):
+            raise ValueError("invalid IMAP host")
+        return host
 
 class MailAccountUpdate(BaseModel):
-    imap_host: str | None = None
-    imap_port: int | None = None
-    imap_user: str | None = None
-    password: str | None = None
+    imap_host: str | None = Field(default=None, min_length=1, max_length=253)
+    imap_port: int | None = Field(default=None, ge=1, le=65535)
+    imap_user: str | None = Field(default=None, max_length=320)
+    password: str | None = Field(default=None, min_length=1, max_length=256)
     is_enabled: bool | None = None
+
+    @field_validator("imap_host")
+    @classmethod
+    def normalize_optional_host(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        host = value.strip().lower().rstrip(".")
+        if not host or any(character.isspace() for character in host):
+            raise ValueError("invalid IMAP host")
+        return host
 
 
 class MailAccountOut(BaseModel):
