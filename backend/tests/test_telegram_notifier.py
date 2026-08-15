@@ -47,6 +47,25 @@ def test_notifications_use_infrastructure_bot(monkeypatch):
     assert b"chat_id=123" not in request.data
 
 
+def test_sent_message_id_is_remembered(monkeypatch):
+    pipeline = MagicMock()
+    monkeypatch.setattr(telegram_notifier._redis, "pipeline", lambda: pipeline)
+    telegram_notifier._remember_message({
+        "ok": True,
+        "result": {"message_id": 88, "chat": {"id": 456}},
+    })
+    pipeline.lpush.assert_called_once()
+    stored = pipeline.lpush.call_args.args[1]
+    assert '"chat_id": "456"' in stored
+    assert '"message_id": 88' in stored
+    pipeline.ltrim.assert_called_once_with(
+        telegram_notifier._SENT_MESSAGES_KEY,
+        0,
+        999,
+    )
+    pipeline.execute.assert_called_once()
+
+
 def test_daily_summary_combines_enterprise_and_legacy_without_duplicates(monkeypatch):
     db = MagicMock()
     db.scalars.return_value.all.return_value = [

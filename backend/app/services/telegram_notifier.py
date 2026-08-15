@@ -5,6 +5,7 @@ from __future__ import annotations
 import html
 import json
 import logging
+import time
 from urllib import parse, request
 
 import redis as redis_lib
@@ -14,6 +15,7 @@ from ..core.config import settings
 logger = logging.getLogger(__name__)
 _redis = redis_lib.Redis.from_url(settings.REDIS_URL)
 _API_BASE = "https://api.telegram.org/bot"
+_SENT_MESSAGES_KEY = "mailctl:telegram:sent-messages"
 
 
 def enabled() -> bool:
@@ -52,9 +54,47 @@ def send_message(text: str, *, reply_markup: dict | None = None) -> bool:
         result = _call("sendMessage", payload)
         if not result.get("ok"):
             logger.warning("Telegram rechazó una notificación: %s", result.get("description"))
+        else:
+            _remember_message(result)
         return bool(result.get("ok"))
     except Exception as exc:
         logger.warning("No se pudo enviar una notificación por Telegram: %s", exc)
+        return False
+
+
+def _remember_message(result: dict) -> None:
+    """Conserva IDs para mantenimiento; nunca guarda texto ni credenciales."""
+    message = result.get("result") or {}
+    chat = message.get("chat") or {}
+    message_id = message.get("message_id")
+    chat_id = chat.get("id", settings.BACKUP_TELEGRAM_CHAT_ID)
+    if message_id is None or chat_id in (None, "", 0):
+        return
+    record = json.dumps({
+        "bot": "infrastructure",
+        "chat_id": str(chat_id),
+        "message_id": int(message_id),
+        "sent_at": int(time.time()),
+    })
+    try:
+        pipe = _redis.pipeline()
+        pipe.lpush(_SENT_MESSAGES_KEY, record)
+        pipe.ltrim(_SENT_MESSAGES_KEY, 0, 999)
+        pipe.execute()
+    except Exception:
+        logger.exception("No se pudo registrar el ID del mensaje Telegram")
+
+
+def delete_message(*, chat_id: str | int, message_id: int) -> bool:
+    """Elimina un mensaje conocido usando el mismo bot que lo creó."""
+    try:
+        result = _call("deleteMessage", {
+            "chat_id": chat_id,
+            "message_id": int(message_id),
+        })
+        return bool(result.get("ok"))
+    except Exception:
+        logger.exception("No se pudo eliminar el mensaje Telegram")
         return False
 
 
