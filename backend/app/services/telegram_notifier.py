@@ -17,7 +17,10 @@ _API_BASE = "https://api.telegram.org/bot"
 
 
 def enabled() -> bool:
-    return bool(settings.TELEGRAM_BOT_TOKEN and settings.TELEGRAM_ADMIN_CHAT_ID)
+    return bool(
+        settings.BACKUP_TELEGRAM_BOT_TOKEN
+        and settings.BACKUP_TELEGRAM_CHAT_ID
+    )
 
 
 def _call(method: str, payload: dict[str, object], *, timeout: int = 15) -> dict:
@@ -25,7 +28,7 @@ def _call(method: str, payload: dict[str, object], *, timeout: int = 15) -> dict
         return {"ok": False, "description": "Telegram no configurado"}
     body = parse.urlencode(payload).encode()
     req = request.Request(
-        f"{_API_BASE}{settings.TELEGRAM_BOT_TOKEN}/{method}",
+        f"{_API_BASE}{settings.BACKUP_TELEGRAM_BOT_TOKEN}/{method}",
         data=body,
         method="POST",
     )
@@ -38,7 +41,7 @@ def send_message(text: str, *, reply_markup: dict | None = None) -> bool:
     if not enabled():
         return False
     payload: dict[str, object] = {
-        "chat_id": settings.TELEGRAM_ADMIN_CHAT_ID,
+        "chat_id": settings.BACKUP_TELEGRAM_CHAT_ID,
         "text": text,
         "parse_mode": "HTML",
         "disable_web_page_preview": "true",
