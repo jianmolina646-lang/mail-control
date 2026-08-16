@@ -290,6 +290,17 @@
 .login-benefits p, .login-access-card > p, .login-reference-form label > span,
 .login-reference-error, .login-reference-submit { font-size: 10px; }
 .login-reference-form input { font-size: 11px; }
+.login-reference-form input { color-scheme: dark; }
+.login-reference-form input:-webkit-autofill,
+.login-reference-form input:-webkit-autofill:hover,
+.login-reference-form input:-webkit-autofill:focus,
+.login-reference-form input:-webkit-autofill:active {
+  -webkit-text-fill-color: #e4e7ed;
+  caret-color: #e4e7ed;
+  -webkit-box-shadow: 0 0 0 1000px #0f1219 inset;
+  box-shadow: 0 0 0 1000px #0f1219 inset;
+  transition: background-color 9999s ease-out 0s;
+}
 
 @media (max-width: 760px) {
   .btn-primary, .btn-secondary, .btn-quiet { min-height: 42px; }
