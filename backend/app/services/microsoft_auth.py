@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 import msal
-from jose import JWTError, jwt
+import jwt
 
 from ..core.config import settings
 
@@ -74,7 +74,7 @@ def account_id_from_state(state: str) -> int:
         if payload.get("purpose") != "microsoft_oauth":
             raise ValueError
         return int(payload["account_id"])
-    except (JWTError, KeyError, TypeError, ValueError) as exc:
+    except (jwt.InvalidTokenError, KeyError, TypeError, ValueError) as exc:
         raise ValueError("Estado OAuth inválido o expirado") from exc
 
 
