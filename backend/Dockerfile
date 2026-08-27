@@ -1,4 +1,5 @@
 FROM python:3.12-slim
+RUN apt-get update && apt-get dist-upgrade -y && rm -rf /var/lib/apt/lists/*
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
@@ -11,6 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+RUN python -m pip install --no-cache-dir --upgrade "setuptools>=78.1.1" "msgpack>=1.2.1"
 
 COPY alembic.ini .
 COPY alembic ./alembic

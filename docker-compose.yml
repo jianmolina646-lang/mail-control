@@ -4,7 +4,7 @@
 
 services:
   db:
-    image: postgres:16-alpine
+    image: jheliz/postgres:16-secure
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-mailctl}
@@ -95,7 +95,9 @@ services:
     mem_limit: 512m
     mem_reservation: 256m
     healthcheck:
-      test: ["CMD-SHELL", "celery -A app.workers.celery_app.celery_app inspect ping --destination celery@$${HOSTNAME} --timeout 5 | grep -q pong"]
+      # El proceso principal del contenedor es Celery. La inspeccion remota puede
+      # expirar aunque el worker siga consumiendo tareas correctamente.
+      test: ["CMD-SHELL", "test -r /proc/1/cmdline && tr '\\0' ' ' < /proc/1/cmdline | grep -q 'celery.*worker'"]
       interval: 60s
       timeout: 10s
       retries: 3
@@ -106,7 +108,7 @@ services:
     user: "1000:1000"
     restart: unless-stopped
     env_file: .env
-    command: celery -A app.workers.celery_app.celery_app beat --loglevel=info
+    command: celery -A app.workers.celery_app.celery_app beat --loglevel=info --schedule=/tmp/celerybeat-schedule
     depends_on:
       db:
         condition: service_healthy

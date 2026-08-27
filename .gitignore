@@ -10,3 +10,9 @@ deploy/certbot/
 *.log
 backup/data/
 .DS_Store
+backups/
+private_backups/
+.env.*
+*.bak*
+*.backup*
+*.pre-*
