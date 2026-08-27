@@ -32,6 +32,10 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    networks:
+      default:
+        aliases:
+          - mail-control-redis
     # maxmemory duro + política de descarte para no reventar la RAM.
     command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru --save "" --appendonly no
     mem_limit: 160m
@@ -81,6 +85,9 @@ services:
     # Celery no necesita privilegios de root ni escribir en /app.
     user: "65534:65534"
     env_file: .env
+    # Evita la colisión con el servicio `redis` de la red Enterprise.
+    environment:
+      REDIS_URL: redis://mail-control-redis-1:6379/0
     command: celery -A app.workers.celery_app.celery_app worker --loglevel=info --concurrency=2 --max-tasks-per-child=50
     networks:
       - default
