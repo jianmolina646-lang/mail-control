@@ -1,210 +1,98 @@
-# Mail Control — TEAM JHELIZ
+# Mail Control Enterprise
 
-Dashboard web privado para gestión **masiva** de bandejas de correo (Outlook,
-Hotmail, Gmail) vía IMAP, con **radar de suscripciones de streaming** que genera
-alertas automáticas de caídas/pagos. Sin logins manuales, sin extracción de
-códigos OTP: se enfoca 100% en la estabilidad del visor.
+Nueva plataforma SaaS multi-tenant para sincronizar, analizar y supervisar
+cuentas de Gmail y Microsoft. Este repositorio es independiente del Mail Control
+actual.
 
-Diseñado para correr en un **VPS chico (1 vCPU / 2 GB RAM)** sin quedarse sin
-memoria, y escalar a miles de cuentas.
+## Estado
 
----
+**Fase 5 - APIs de dashboard y búsqueda**
 
-## Stack
+- FastAPI con ciclo de vida explícito.
+- SQLAlchemy asíncrono y PostgreSQL.
+- Redis para caché, rate limits y coordinación.
+- RabbitMQ para trabajos duraderos.
+- Alembic como único mecanismo de migración.
+- Contraseñas Argon2id y JWT de acceso de corta duración.
+- Refresh tokens rotatorios, revocables y almacenados como hash.
+- Roles Owner, Admin, Operator y Viewer.
+- Aislamiento PostgreSQL Row-Level Security por distribuidor.
+- Gmail API con OAuth 2.0 server-side, PKCE, state de un solo uso y acceso offline.
+- Tokens de Google cifrados en reposo.
+- Sincronización completa inicial e incremental mediante Gmail History API.
+- Worker RabbitMQ independiente e importación idempotente por mensaje.
+- Outlook, Hotmail y Live mediante Microsoft Graph y endpoint OAuth `common`.
+- Delta Query por carpeta con cursores opacos e IDs inmutables.
+- Clasificación estructurada con Gemini y validación Pydantic.
+- Análisis persistente para no consumir tokens dos veces.
+- Alertas automáticas y outbox transaccional con reintentos.
+- Dashboard agregado, tendencias de 14 días y cobertura de análisis.
+- Búsqueda full-text PostgreSQL y paginación estable por cursor.
+- Filtros por cuenta, proveedor, categoría, riesgo y estado de alerta.
+- Calidad automatizada con Ruff, MyPy y Pytest.
 
-| Capa            | Tecnología                                   |
-|-----------------|----------------------------------------------|
-| Backend         | Python + **FastAPI**                         |
-| Tareas async    | **Celery + Redis**                           |
-| Base de datos   | **PostgreSQL** (App Passwords **encriptadas** con Fernet) |
-| Frontend        | **React + Vite + TailwindCSS** (dark, virtualizado) |
-| Despliegue      | **Docker Compose** + Nginx + Certbot         |
-
----
-
-## Estructura
-
-```
-mail-control/
-├── backend/
-│   ├── app/
-│   │   ├── main.py               # FastAPI app + creación de admin inicial
-│   │   ├── api/routes.py         # Endpoints (auth, cuentas, mensajes, alertas, stats)
-│   │   ├── core/
-│   │   │   ├── config.py         # Settings (límites de hardware incluidos)
-│   │   │   ├── crypto.py         # Encriptación Fernet de las App Passwords
-│   │   │   ├── db.py             # SQLAlchemy (pool chico)
-│   │   │   └── security.py       # JWT + bcrypt
-│   │   ├── models/models.py      # User, MailAccount, Message, Alert
-│   │   ├── schemas/schemas.py    # Pydantic
-│   │   ├── services/
-│   │   │   ├── imap_service.py   # Lectura IMAP (abre/cierra por cuenta)
-│   │   │   └── radar.py          # Detección de alertas de streaming
-│   │   └── workers/
-│   │       ├── celery_app.py     # Celery afinado para 2 GB RAM
-│   │       └── tasks.py          # Escaneo en chunks + semáforo IMAP
-│   ├── Dockerfile
-│   └── requirements.txt
-├── frontend/
-│   ├── src/
-│   │   ├── pages/                # Login, Inbox (virtualizado), Alerts, Accounts
-│   │   ├── components/           # Layout, MessageView
-│   │   └── lib/api.js            # Cliente HTTP
-│   ├── Dockerfile                # build Vite -> nginx
-│   └── nginx.conf
-├── deploy/
-│   ├── nginx/app.conf            # Proxy público + SSL para ecormecejhelizstore.com
-│   └── init-ssl.sh               # Emite el certificado inicial de Certbot
-├── docker-compose.yml            # mem_limit en TODOS los servicios
-└── .env.example
-```
-
----
-
-## 🚨 Control de recursos (anti Out-of-Memory)
-
-- **Semáforo IMAP global en Redis**: nunca hay más de `IMAP_MAX_CONCURRENCY` (50)
-  conexiones IMAP abiertas en todo el sistema, sin importar cuántos workers haya.
-- **Chunks chicos**: cada tarea Celery procesa `IMAP_CHUNK_SIZE` (3) cuentas
-  **en serie**, abriendo y cerrando cada conexión de inmediato.
-- **Celery afinado**: `concurrency=2`, `prefetch=1`, `max-tasks-per-child=50` y
-  `max_memory_per_child≈300MB` (recicla el proceso y libera RAM).
-- **`mem_limit` en Docker** para Postgres (512m), Redis (160m, `maxmemory 128mb`),
-  backend/worker (512m), beat/frontend/proxy (≤128m).
-- **Limpieza automática**: se borran correos > 30 días **sin alerta** (cuida disco).
-
----
-
-## Guía de instalación en Ubuntu (paso a paso)
-
-### 1. Crear 2 GB de memoria Swap (OBLIGATORIO antes de Docker)
+## Inicio local
 
 ```bash
-# Verificar que no exista ya swap
-sudo swapon --show
-
-# Crear archivo swap de 2 GB
-sudo fallocate -l 2G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=2048
-sudo chmod 600 /swapfile
-sudo mkswap /swapfile
-sudo swapon /swapfile
-
-# Hacerlo persistente al reiniciar
-echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
-
-# Afinar el uso de swap (menos agresivo)
-echo 'vm.swappiness=10' | sudo tee -a /etc/sysctl.conf
-sudo sysctl -p
-
-# Confirmar
-free -h
-```
-
-### 2. Instalar Docker + Docker Compose
-
-```bash
-sudo apt-get update
-sudo apt-get install -y ca-certificates curl git
-sudo install -m 0755 -d /etc/apt/keyrings
-sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
-sudo chmod a+r /etc/apt/keyrings/docker.asc
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] \
-  https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo $VERSION_CODENAME) stable" | \
-  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-sudo apt-get update
-sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-sudo usermod -aG docker $USER   # cerrá y volvé a abrir sesión después
-```
-
-### 3. Clonar y configurar
-
-```bash
-git clone https://github.com/jianmolina646-lang/mail-control.git
-cd mail-control
 cp .env.example .env
-
-# Generar los secretos y pegarlos en .env
-python3 -c "import secrets; print('SECRET_KEY=' + secrets.token_urlsafe(48))"
-python3 -c "from cryptography.fernet import Fernet; print('CREDENTIALS_ENCRYPTION_KEY=' + Fernet.generate_key().decode())"
-
-nano .env   # completar SECRET_KEY, CREDENTIALS_ENCRYPTION_KEY, ADMIN_PASSWORD, POSTGRES_PASSWORD
+docker compose up --build
 ```
 
-> ⚠️ Guardá `CREDENTIALS_ENCRYPTION_KEY` en un lugar seguro. Si la perdés, no se
-> pueden desencriptar las App Passwords ya guardadas.
+## API
 
-### 4. Apuntar el dominio
+- `GET /health/live`
+- `GET /health/ready`
+- `POST /v1/auth/register`
+- `POST /v1/auth/login`
+- `POST /v1/auth/refresh`
+- `POST /v1/auth/logout`
+- `GET /v1/auth/me`
+- `POST /v1/providers/gmail/authorize`
+- `GET /v1/providers/gmail/callback`
+- `POST /v1/providers/gmail/{account_id}/sync`
+- `POST /v1/providers/microsoft/authorize`
+- `GET /v1/providers/microsoft/callback`
+- `POST /v1/providers/microsoft/{account_id}/sync`
+- `GET /v1/dashboard/summary`
+- `GET /v1/mail/accounts`
+- `GET /v1/mail/messages`
+- `GET /v1/alerts`
+- `PATCH /v1/alerts/{alert_id}/resolve`
+- `GET /v1/saas/usage`
+- `GET /v1/saas/users`
+- `POST /v1/saas/users`
+- `PATCH /v1/saas/users/{user_id}`
 
-En tu DNS, apuntá `ecormecejhelizstore.com` (y `www`) al IP del VPS (registro A).
+Cada transacción protegida configura `app.current_tenant_id`; las políticas RLS
+rechazan accesos a datos de otro distribuidor incluso si una consulta olvida el
+filtro de tenant.
 
-### 5. Levantar
+## Validación
 
 ```bash
-# Build + arranque (la primera vez tarda unos minutos)
-docker compose build
-docker compose up -d db redis backend worker beat frontend
-
-# Ver estado
-docker compose ps
+docker compose run --rm api ruff check .
+docker compose run --rm api mypy src
+docker compose run --rm api pytest
+docker compose run --rm api alembic upgrade head
 ```
 
-### 6. Nginx + SSL
+## Frontend
 
-**Opción A — VPS compartido (recomendada; la tienda ya usa los puertos 80/443):**
-el panel corre en `127.0.0.1:8081` y el nginx del host lo publica en el
-subdominio `panel.ecormecejhelizstore.com`:
+El panel React de producción vive en `frontend/` y consume directamente la API
+real `/v1` para autenticación, métricas, correos, cuentas conectadas,
+autorización OAuth, sincronización manual y alertas.
 
 ```bash
-sudo cp deploy/nginx/host-panel.conf /etc/nginx/sites-available/mail-control
-sudo ln -s /etc/nginx/sites-available/mail-control /etc/nginx/sites-enabled/
-sudo nginx -t && sudo systemctl reload nginx
-sudo certbot --nginx -d panel.ecormecejhelizstore.com
+cd frontend
+npm install
+npm run dev
 ```
 
-**Opción B — VPS dedicado (puertos 80/443 libres):** usar el proxy propio del
-compose (perfil `standalone`):
+En desarrollo, Vite redirige `/v1` y `/health` a `http://localhost:8000`. Define
+`VITE_API_URL` únicamente cuando la API use otro origen. El paquete de
+producción se genera con `npm run build`.
 
-```bash
-docker compose --profile standalone up -d proxy certbot
-CERTBOT_EMAIL=tucorreo@dominio.com ./deploy/init-ssl.sh
-```
-
-Listo: entrá a **https://panel.ecormecejhelizstore.com** y logueate con
-`ADMIN_EMAIL` / `ADMIN_PASSWORD`.
-
----
-
-## Uso
-
-1. **Cuentas** → agregá casillas (email + App Password). La contraseña se guarda
-   encriptada. "Probar" valida la conexión IMAP al instante.
-2. **Bandeja** → visor global de todos los correos, con búsqueda y scroll
-   virtualizado (lista de miles de correos sin trabar el navegador).
-3. **Alertas críticas** → correos de streaming (@netflix, @hbomax, @primevideo…)
-   con palabras de problema (pago, rechazado, caducada, cancelada…). Marcá como
-   resueltas cuando las atiendas.
-
-### App Passwords
-
-- **Gmail**: activá verificación en 2 pasos → creá una "Contraseña de aplicación".
-- **Outlook/Hotmail**: puede requerir App Password si tenés 2FA. Host IMAP:
-  `outlook.office365.com:993`.
-
----
-
-## Comandos útiles
-
-```bash
-docker compose logs -f worker      # ver el escaneo IMAP
-docker compose logs -f backend
-docker stats                       # confirmar que la RAM no se dispara
-docker compose restart worker
-```
-
----
-
-## Notas de seguridad
-
-- Las App Passwords se cifran con Fernet; en la DB solo hay texto cifrado.
-- El panel es privado (login JWT) y `noindex`.
-- **No** se extraen códigos OTP/PIN por diseño.
+El servicio `web` de Docker Compose compila el frontend y lo sirve mediante
+Nginx en `127.0.0.1:8080`, con proxy interno hacia `api:8000`. En producción,
+configura `FRONTEND_URL` y los URI de retorno OAuth con el dominio HTTPS
+definitivo antes de autorizar cuentas.

@@ -1,0 +1,27 @@
+name: production-health
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-health
+  cancel-in-progress: true
+
+jobs:
+  readiness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Verify public readiness
+        shell: bash
+        run: |
+          set -euo pipefail
+          payload=$(curl --fail --silent --show-error \
+            --retry 3 --retry-all-errors --max-time 15 \
+            https://panel.ecormecejhelizstore.com/health/ready)
+          python -c 'import json,sys; data=json.loads(sys.argv[1]); assert data.get("status") == "ready"; assert all(data.get("dependencies", {}).values())' "$payload"

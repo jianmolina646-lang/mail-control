@@ -1,0 +1,80 @@
+name: production-drift
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-drift
+  cancel-in-progress: true
+
+jobs:
+  compare:
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify deployed source matches GitHub
+        shell: bash
+        run: |
+          python - <<'PY'
+          from __future__ import annotations
+
+          import hashlib
+          from pathlib import Path
+
+          repository = Path.cwd()
+          production = Path("/home/deploy/mail-control-enterprise")
+          roots = ("src", "frontend/src", "frontend/public", "alembic")
+          files = (
+              "Dockerfile",
+              "compose.yaml",
+              "pyproject.toml",
+              "frontend/Dockerfile",
+              "frontend/package.json",
+              "frontend/package-lock.json",
+              "frontend/nginx.conf",
+          )
+
+          def digest(path: Path) -> str:
+              return hashlib.sha256(path.read_bytes()).hexdigest()
+
+          def tracked(path: Path) -> bool:
+              return (
+                  path.is_file()
+                  and "node_modules" not in path.parts
+                  and "__pycache__" not in path.parts
+                  and not path.name.startswith(".")
+                  and ".backup-" not in path.name
+                  and ".pre-" not in path.name
+                  and path.suffix != ".pyc"
+              )
+
+          expected: dict[str, str] = {}
+          deployed: dict[str, str] = {}
+          for root in roots:
+              for path in (repository / root).rglob("*"):
+                  if tracked(path):
+                      expected[str(path.relative_to(repository))] = digest(path)
+              for path in (production / root).rglob("*"):
+                  if tracked(path):
+                      deployed[str(path.relative_to(production))] = digest(path)
+          for name in files:
+              expected[name] = digest(repository / name)
+              deployed[name] = digest(production / name)
+
+          missing = sorted(set(expected) - set(deployed))
+          extra = sorted(set(deployed) - set(expected))
+          changed = sorted(name for name in expected.keys() & deployed if expected[name] != deployed[name])
+          if missing or extra or changed:
+              print("Production source differs from GitHub.")
+              for label, names in (("missing", missing), ("extra", extra), ("changed", changed)):
+                  for name in names:
+                      print(f"{label}: {name}")
+              raise SystemExit(1)
+          print(f"Production matches GitHub: {len(expected)} files verified.")
+          PY

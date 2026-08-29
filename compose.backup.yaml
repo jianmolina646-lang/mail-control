@@ -1,0 +1,25 @@
+services:
+  enterprise-backup:
+    build: ./backup-enterprise
+    restart: unless-stopped
+    profiles: ["backup"]
+    env_file:
+      - path: .env
+        required: false
+      - path: .env.backup
+        required: true
+    environment:
+      PGHOST: postgres
+      PGPORT: 5432
+      MEGA_FOLDER: /MailControlBackups/Enterprise
+    volumes:
+      - enterprise_backup_data:/backups
+      - enterprise_mega_session:/root/.megaCmd
+      - ./.env:/source/config/.env:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  enterprise_backup_data:
+  enterprise_mega_session:

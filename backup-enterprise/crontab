@@ -1,0 +1,3 @@
+CRON_TZ=America/Lima
+10 3 * * * /bin/bash -c '. /etc/mailctl-enterprise-backup.env; exec /usr/local/bin/mailctl-enterprise-backup' >> /proc/1/fd/1 2>> /proc/1/fd/2
+40 3 * * 0 /bin/bash -c '. /etc/mailctl-enterprise-backup.env; exec /usr/local/bin/mailctl-enterprise-verify-restore' >> /proc/1/fd/1 2>> /proc/1/fd/2

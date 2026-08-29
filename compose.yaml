@@ -1,0 +1,283 @@
+name: mail-control-enterprise
+
+services:
+  postgres:
+    image: jheliz/postgres:16-secure
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-mail_control}
+      POSTGRES_USER: ${POSTGRES_USER:-mail_control}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mail_control}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  rabbitmq:
+    image: jheliz/rabbitmq:4.1-secure
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:-mail_control}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:-mail_control}
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 20s
+      retries: 12
+
+  api:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      APP_SECRET_KEY: ${APP_SECRET_KEY:-local-development-secret-key-change-me}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://mail_control:mail_control@postgres:5432/mail_control}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      RABBITMQ_URL: ${RABBITMQ_URL:-amqp://mail_control:mail_control@rabbitmq:5672/}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:5173}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:8080}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-http://localhost:8000/v1/providers/gmail/callback}
+      GMAIL_PUSH_ENABLED: ${GMAIL_PUSH_ENABLED:-false}
+      GMAIL_PUBSUB_TOPIC: ${GMAIL_PUBSUB_TOPIC:-}
+      GMAIL_PUBSUB_AUDIENCE: ${GMAIL_PUBSUB_AUDIENCE:-}
+      GMAIL_PUBSUB_SERVICE_ACCOUNT: ${GMAIL_PUBSUB_SERVICE_ACCOUNT:-}
+      GMAIL_PUBSUB_VERIFICATION_TOKEN: ${GMAIL_PUBSUB_VERIFICATION_TOKEN:-}
+      GMAIL_WATCH_LABEL_IDS: ${GMAIL_WATCH_LABEL_IDS:-INBOX}
+      GMAIL_WATCH_RENEWAL_HOURS: ${GMAIL_WATCH_RENEWAL_HOURS:-24}
+      GMAIL_PUSH_DEDUPE_SECONDS: ${GMAIL_PUSH_DEDUPE_SECONDS:-120}
+      GOOGLE_LOGIN_REDIRECT_URI: ${GOOGLE_LOGIN_REDIRECT_URI:-https://panel.ecormecejhelizstore.com/v1/auth/oauth/google/callback}
+      MICROSOFT_CLIENT_ID: ${MICROSOFT_CLIENT_ID:-}
+      MICROSOFT_CLIENT_SECRET: ${MICROSOFT_CLIENT_SECRET:-}
+      MICROSOFT_REDIRECT_URI: ${MICROSOFT_REDIRECT_URI:-http://localhost:8000/v1/providers/microsoft/callback}
+      MICROSOFT_LOGIN_REDIRECT_URI: ${MICROSOFT_LOGIN_REDIRECT_URI:-https://panel.ecormecejhelizstore.com/v1/auth/oauth/microsoft/callback}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USE_TLS: ${SMTP_USE_TLS:-true}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      CREDENTIAL_ENCRYPTION_KEY: ${CREDENTIAL_ENCRYPTION_KEY:-}
+      CREDENTIAL_ENCRYPTION_KEY_FILE: ${CREDENTIAL_ENCRYPTION_KEY_FILE:-/run/secrets/credential-encryption-key}
+    volumes:
+      - ./secrets/credential-encryption-key:/run/secrets/credential-encryption-key:ro
+    ports:
+      - "${API_BIND_ADDRESS:-127.0.0.1}:${API_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=5)",
+        ]
+      interval: 15s
+      timeout: 8s
+      retries: 5
+      start_period: 15s
+
+  web:
+    build:
+      context: ./frontend
+    restart: unless-stopped
+    ports:
+      - "${WEB_BIND_ADDRESS:-127.0.0.1}:${WEB_PORT:-8080}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  worker:
+    build: .
+    command: python -m mail_control.worker
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      APP_SECRET_KEY: ${APP_SECRET_KEY:-local-development-secret-key-change-me}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://mail_control:mail_control@postgres:5432/mail_control}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      RABBITMQ_URL: ${RABBITMQ_URL:-amqp://mail_control:mail_control@rabbitmq:5672/}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-http://localhost:8000/v1/providers/gmail/callback}
+      GMAIL_PUSH_ENABLED: ${GMAIL_PUSH_ENABLED:-false}
+      GMAIL_PUBSUB_TOPIC: ${GMAIL_PUBSUB_TOPIC:-}
+      GMAIL_WATCH_LABEL_IDS: ${GMAIL_WATCH_LABEL_IDS:-INBOX}
+      CREDENTIAL_ENCRYPTION_KEY: ${CREDENTIAL_ENCRYPTION_KEY:-}
+      CREDENTIAL_ENCRYPTION_KEY_FILE: ${CREDENTIAL_ENCRYPTION_KEY_FILE:-/run/secrets/credential-encryption-key}
+      TELEGRAM_ALERTS_FILE: /run/secrets/telegram-alerts.env
+      TELEGRAM_ACCOUNT_ALERT_DEDUPE_SECONDS: ${TELEGRAM_ACCOUNT_ALERT_DEDUPE_SECONDS:-3600}
+      HEALTH_QUEUE: mail.sync.gmail
+    volumes:
+      - ./secrets/telegram-alerts.env:/run/secrets/telegram-alerts.env:ro
+      - ./secrets/credential-encryption-key:/run/secrets/credential-encryption-key:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-m", "mail_control.operational_health"]
+      interval: 30s
+      timeout: 30s
+      retries: 5
+      start_period: 15s
+
+  microsoft-worker:
+    build: .
+    command: python -m mail_control.microsoft_worker
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      APP_SECRET_KEY: ${APP_SECRET_KEY:-local-development-secret-key-change-me}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://mail_control:mail_control@postgres:5432/mail_control}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      RABBITMQ_URL: ${RABBITMQ_URL:-amqp://mail_control:mail_control@rabbitmq:5672/}
+      MICROSOFT_CLIENT_ID: ${MICROSOFT_CLIENT_ID:-}
+      MICROSOFT_CLIENT_SECRET: ${MICROSOFT_CLIENT_SECRET:-}
+      MICROSOFT_REDIRECT_URI: ${MICROSOFT_REDIRECT_URI:-http://localhost:8000/v1/providers/microsoft/callback}
+      CREDENTIAL_ENCRYPTION_KEY: ${CREDENTIAL_ENCRYPTION_KEY:-}
+      CREDENTIAL_ENCRYPTION_KEY_FILE: ${CREDENTIAL_ENCRYPTION_KEY_FILE:-/run/secrets/credential-encryption-key}
+      TELEGRAM_ALERTS_FILE: /run/secrets/telegram-alerts.env
+      TELEGRAM_ACCOUNT_ALERT_DEDUPE_SECONDS: ${TELEGRAM_ACCOUNT_ALERT_DEDUPE_SECONDS:-3600}
+      HEALTH_QUEUE: mail.sync.microsoft
+    volumes:
+      - ./secrets/telegram-alerts.env:/run/secrets/telegram-alerts.env:ro
+      - ./secrets/credential-encryption-key:/run/secrets/credential-encryption-key:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-m", "mail_control.operational_health"]
+      interval: 30s
+      timeout: 30s
+      retries: 5
+      start_period: 15s
+
+  sync-scheduler:
+    build: .
+    command: python -m mail_control.sync_scheduler
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      APP_SECRET_KEY: ${APP_SECRET_KEY:-local-development-secret-key-change-me}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://mail_control:mail_control@postgres:5432/mail_control}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      RABBITMQ_URL: ${RABBITMQ_URL:-amqp://mail_control:mail_control@rabbitmq:5672/}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      AUTO_SYNC_INTERVAL_SECONDS: ${AUTO_SYNC_INTERVAL_SECONDS:-300}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-http://localhost:8000/v1/providers/gmail/callback}
+      CREDENTIAL_ENCRYPTION_KEY: ${CREDENTIAL_ENCRYPTION_KEY:-}
+      CREDENTIAL_ENCRYPTION_KEY_FILE: ${CREDENTIAL_ENCRYPTION_KEY_FILE:-/run/secrets/credential-encryption-key}
+      TELEGRAM_ALERTS_FILE: /run/secrets/telegram-alerts.env
+      TELEGRAM_ACCOUNT_ALERT_DEDUPE_SECONDS: ${TELEGRAM_ACCOUNT_ALERT_DEDUPE_SECONDS:-3600}
+      GMAIL_PUSH_ENABLED: ${GMAIL_PUSH_ENABLED:-false}
+      GMAIL_PUBSUB_TOPIC: ${GMAIL_PUBSUB_TOPIC:-}
+      GMAIL_WATCH_LABEL_IDS: ${GMAIL_WATCH_LABEL_IDS:-INBOX}
+      GMAIL_WATCH_RENEWAL_HOURS: ${GMAIL_WATCH_RENEWAL_HOURS:-24}
+      GMAIL_PUSH_DEDUPE_SECONDS: ${GMAIL_PUSH_DEDUPE_SECONDS:-120}
+    volumes:
+      - ./secrets/telegram-alerts.env:/run/secrets/telegram-alerts.env:ro
+      - ./secrets/credential-encryption-key:/run/secrets/credential-encryption-key:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-m", "mail_control.operational_health"]
+      interval: 30s
+      timeout: 30s
+      retries: 5
+      start_period: 15s
+
+  analysis-worker:
+    profiles: ["analysis"]
+    build: .
+    command: python -m mail_control.analysis_worker
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      APP_SECRET_KEY: ${APP_SECRET_KEY:-local-development-secret-key-change-me}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://mail_control:mail_control@postgres:5432/mail_control}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      RABBITMQ_URL: ${RABBITMQ_URL:-amqp://mail_control:mail_control@rabbitmq:5672/}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.6-flash}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.4-nano}
+      AI_PROVIDER: ${AI_PROVIDER:-openai}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-m", "mail_control.operational_health"]
+      interval: 30s
+      timeout: 30s
+      retries: 5
+      start_period: 15s
+
+volumes:
+  postgres_data:
+  redis_data:
+  rabbitmq_data:

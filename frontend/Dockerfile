@@ -1,13 +1,16 @@
-# --- build ---
-FROM node:20-alpine AS build
+FROM node:22-alpine AS build
+RUN apk upgrade --no-cache
+
 WORKDIR /app
-COPY package.json ./
-RUN npm install
+COPY package.json package-lock.json ./
+RUN npm ci --no-audit --no-fund
 COPY . .
 RUN npm run build
 
-# --- serve (nginx sirve los estáticos y hace de proxy inverso) ---
-FROM nginx:1.27-alpine
-COPY --from=build /app/dist /usr/share/nginx/html
+FROM nginx:1.27-alpine AS runtime
+RUN apk upgrade --no-cache
 COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /app/dist /usr/share/nginx/html
 EXPOSE 80
+HEALTHCHECK --interval=15s --timeout=3s --retries=3 \
+  CMD wget -qO- http://127.0.0.1/healthz || exit 1
