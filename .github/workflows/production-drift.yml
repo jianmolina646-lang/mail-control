@@ -21,7 +21,7 @@ jobs:
       - name: Verify deployed source matches GitHub
         shell: bash
         run: |
-          python - <<'PY'
+          python3 - <<'PY'
           from __future__ import annotations
 
           import hashlib

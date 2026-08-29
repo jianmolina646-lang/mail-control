@@ -182,11 +182,13 @@ async def oauth_callback(
 
 
 @router.post("/oauth/exchange")
-async def oauth_exchange(data: TicketRequest, request: Request, response: Response):
+async def oauth_exchange(
+    data: TicketRequest, request: Request, response: Response
+) -> dict[str, object]:
     raw = await request.app.state.resources.redis.getdel(f"login:ticket:{data.ticket}")
     if not raw:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid or expired login ticket")
-    payload = json.loads(raw)
+    payload: dict[str, object] = json.loads(raw)
     set_refresh_cookie(response, payload["refresh_token"])
     payload.pop("refresh_token", None)
     return payload
@@ -199,11 +201,14 @@ def code_digest(settings: Settings, tenant_slug: str, email: str, code: str) -> 
 
 
 def send_recovery_email(settings: Settings, recipient: str, code: str) -> None:
-    if not all((settings.smtp_host, settings.smtp_username, settings.smtp_password)):
+    smtp_host = settings.smtp_host
+    smtp_username = settings.smtp_username
+    smtp_password = settings.smtp_password
+    if smtp_host is None or smtp_username is None or smtp_password is None:
         raise RuntimeError("SMTP is not configured")
     message = EmailMessage()
     message["Subject"] = "Código para cambiar tu contraseña · Mail Control"
-    message["From"] = settings.smtp_from or settings.smtp_username
+    message["From"] = settings.smtp_from or smtp_username
     message["To"] = recipient
     message.set_content(
         f"Tu código de recuperación es: {code}\n\n"
@@ -211,10 +216,10 @@ def send_recovery_email(settings: Settings, recipient: str, code: str) -> None:
         "Si no solicitaste este cambio, ignora este mensaje."
     )
     context = ssl.create_default_context()
-    with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=15) as smtp:
+    with smtplib.SMTP(smtp_host, settings.smtp_port, timeout=15) as smtp:
         if settings.smtp_use_tls:
             smtp.starttls(context=context)
-        smtp.login(settings.smtp_username, settings.smtp_password)
+        smtp.login(smtp_username, smtp_password)
         smtp.send_message(message)
 
 
@@ -223,7 +228,7 @@ async def password_request(
     data: RecoveryRequest,
     request: Request,
     session: Annotated[AsyncSession, Depends(database_session)],
-):
+) -> dict[str, str]:
     settings = get_settings()
     tenant = await identity_service(session).repository.tenant_by_slug(data.tenant_slug)
     user = None
@@ -256,7 +261,7 @@ async def password_confirm(
     data: RecoveryConfirm,
     request: Request,
     session: Annotated[AsyncSession, Depends(database_session)],
-):
+) -> Response:
     settings = get_settings()
     email = data.email.strip().casefold()
     key = f"password:reset:{data.tenant_slug}:{email}"
