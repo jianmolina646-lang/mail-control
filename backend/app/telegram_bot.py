@@ -26,6 +26,23 @@ logger = logging.getLogger("mail_control.telegram")
 _redis = redis_lib.Redis.from_url(settings.REDIS_URL)
 _PAGE_SIZE = 5
 _EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+_PREMIUM_EMOJI = {
+    "mail_control": "4956739572114392015",
+    "accounts": "5292170346063995499",
+    "connected": "5246708069991205241",
+    "pending": "4956290155326473271",
+    "error": "5974083768233760323",
+    "alerts": "5420323339723881652",
+    "services": "5472209190359407741",
+    "live": "4958479549265347295",
+    "protected": "5422546307422118237",
+    "executive": "5316688029434264397",
+    "netflix": "5418026554422750284",
+    "search": "5206473031110631274",
+    "system": "6008224489039466126",
+    "audit": "5456623351042694411",
+    "help": "5866185084427572234",
+}
 _CODE_PATTERNS = (
     re.compile(
         r"(?i)(?:código|codigo|code|verification|verificación|inicio de sesión)"
@@ -89,28 +106,33 @@ def send_message(text: str, *, reply_markup: dict | None = None) -> bool:
         return False
 
 
+def _premium(name: str, fallback: str) -> str:
+    """Render a validated Telegram custom emoji with a portable fallback."""
+    return f'<tg-emoji emoji-id="{_PREMIUM_EMOJI[name]}">{fallback}</tg-emoji>'
+
+
 def _menu() -> dict:
     return {
         "keyboard": [
             [
-                {"text": "🏠 Panel", "style": "primary"},
-                {"text": "📨 Cuentas", "style": "primary"},
+                {"text": "🏠 Panel", "style": "primary", "icon_custom_emoji_id": _PREMIUM_EMOJI["executive"]},
+                {"text": "📨 Cuentas", "style": "primary", "icon_custom_emoji_id": _PREMIUM_EMOJI["accounts"]},
             ],
             [
                 {"text": "🔐 Código rápido", "style": "success"},
-                {"text": "🎬 Netflix", "style": "danger"},
+                {"text": "🎬 Netflix", "style": "danger", "icon_custom_emoji_id": _PREMIUM_EMOJI["netflix"]},
             ],
             [
-                {"text": "🚨 Alertas", "style": "danger"},
-                {"text": "🔎 Buscar correo", "style": "primary"},
+                {"text": "🚨 Alertas", "style": "danger", "icon_custom_emoji_id": _PREMIUM_EMOJI["alerts"]},
+                {"text": "🔎 Buscar correo", "style": "primary", "icon_custom_emoji_id": _PREMIUM_EMOJI["search"]},
             ],
             [
                 {"text": "⚡ Sincronizar", "style": "success"},
-                {"text": "🩺 Sistema", "style": "success"},
+                {"text": "🩺 Sistema", "style": "success", "icon_custom_emoji_id": _PREMIUM_EMOJI["system"]},
             ],
             [
-                {"text": "🛡 Auditoría", "style": "primary"},
-                {"text": "✨ Ayuda", "style": "primary"},
+                {"text": "🛡 Auditoría", "style": "primary", "icon_custom_emoji_id": _PREMIUM_EMOJI["audit"]},
+                {"text": "✨ Ayuda", "style": "primary", "icon_custom_emoji_id": _PREMIUM_EMOJI["help"]},
             ],
         ],
         "resize_keyboard": True,
@@ -145,20 +167,20 @@ def _audit(action: str, detail: str = "") -> None:
 
 def _help() -> str:
     return (
-        "✨ <b>MAIL CONTROL ENTERPRISE</b>\n"
+        f"{_premium('mail_control', '💎')} <b>MAIL CONTROL ENTERPRISE</b>\n"
         "<i>Centro inteligente de operaciones</i>\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n\n"
         "🔐 <b>Códigos y accesos</b>\n"
         "<code>/codigo correo@dominio.com</code>\n"
         "<code>/netflix correo@dominio.com</code>\n\n"
-        "📨 <b>Correo y sincronización</b>\n"
+        f"{_premium('accounts', '📨')} <b>Correo y sincronización</b>\n"
         "<code>/buscar correo@dominio.com</code>\n"
         "<code>/sincronizar correo@dominio.com</code>\n"
         "<code>/sincronizar_todo</code>\n\n"
-        "📊 <b>Control administrativo</b>\n"
+        f"{_premium('executive', '📊')} <b>Control administrativo</b>\n"
         "<code>/resumen</code> · <code>/cuentas</code> · <code>/alertas</code>\n"
         "<code>/estado</code> · <code>/auditoria</code>\n\n"
-        "🛡️ <i>Sesión privada · datos protegidos · acciones auditadas</i>"
+        f"{_premium('protected', '🛡️')} <i>Sesión privada · datos protegidos · acciones auditadas</i>"
     )
 
 
@@ -187,15 +209,17 @@ def _summary() -> tuple[str, dict]:
         ) or 0
         subscriptions = db.scalar(select(func.count(Subscription.id))) or 0
         text = (
-            "💎 <b>MAIL CONTROL · LIVE</b>\n"
+            f"{_premium('mail_control', '💎')} <b>MAIL CONTROL · LIVE</b>\n"
             "━━━━━━━━━━━━━━━━━━━━━━\n"
-            "📊 <b>PANEL EJECUTIVO</b>\n\n"
-            f"📨 <b>{accounts}</b> cuentas bajo control\n"
-            f"🟢 <b>{connected}</b> conectadas   🟡 <b>{pending}</b> pendientes\n"
-            f"🔴 <b>{errors}</b> con error   🚨 <b>{open_alerts}</b> alertas\n"
-            f"🎟️ <b>{subscriptions}</b> servicios detectados\n\n"
-            "⚡ <b>Monitoreo en vivo</b>\n"
-            "🔒 <i>Infraestructura protegida y sincronización activa</i>"
+            f"{_premium('executive', '📊')} <b>PANEL EJECUTIVO</b>\n\n"
+            f"{_premium('accounts', '📨')} <b>{accounts}</b> cuentas bajo control\n"
+            f"{_premium('connected', '🟢')} <b>{connected}</b> conectadas   "
+            f"{_premium('pending', '🟡')} <b>{pending}</b> pendientes\n"
+            f"{_premium('error', '🔴')} <b>{errors}</b> con error   "
+            f"{_premium('alerts', '🚨')} <b>{open_alerts}</b> alertas\n"
+            f"{_premium('services', '🎟️')} <b>{subscriptions}</b> servicios detectados\n\n"
+            f"{_premium('live', '⚡')} <b>Monitoreo en vivo</b>\n"
+            f"{_premium('protected', '🔒')} <i>Infraestructura protegida y sincronización activa</i>"
         )
         markup = {
             "inline_keyboard": [
