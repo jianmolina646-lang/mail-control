@@ -119,8 +119,8 @@ def _menu() -> dict:
                 {"text": "📨 Cuentas", "style": "primary", "icon_custom_emoji_id": _PREMIUM_EMOJI["accounts"]},
             ],
             [
-                {"text": "🔐 Código rápido", "style": "success"},
-                {"text": "🎬 Netflix", "style": "danger", "icon_custom_emoji_id": _PREMIUM_EMOJI["netflix"]},
+                {"text": "📈 Reporte", "style": "success", "icon_custom_emoji_id": _PREMIUM_EMOJI["live"]},
+                {"text": "🟡 Pendientes", "style": "primary", "icon_custom_emoji_id": _PREMIUM_EMOJI["pending"]},
             ],
             [
                 {"text": "🚨 Alertas", "style": "danger", "icon_custom_emoji_id": _PREMIUM_EMOJI["alerts"]},
@@ -170,15 +170,13 @@ def _help() -> str:
         f"{_premium('mail_control', '💎')} <b>MAIL CONTROL ENTERPRISE</b>\n"
         "<i>Centro inteligente de operaciones</i>\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "🔐 <b>Códigos y accesos</b>\n"
-        "<code>/codigo correo@dominio.com</code>\n"
-        "<code>/netflix correo@dominio.com</code>\n\n"
         f"{_premium('accounts', '📨')} <b>Correo y sincronización</b>\n"
         "<code>/buscar correo@dominio.com</code>\n"
         "<code>/sincronizar correo@dominio.com</code>\n"
         "<code>/sincronizar_todo</code>\n\n"
         f"{_premium('executive', '📊')} <b>Control administrativo</b>\n"
-        "<code>/resumen</code> · <code>/cuentas</code> · <code>/alertas</code>\n"
+        "<code>/resumen</code> · <code>/reporte</code> · <code>/pendientes</code>\n"
+        "<code>/cuentas</code> · <code>/alertas</code>\n"
         "<code>/estado</code> · <code>/auditoria</code>\n\n"
         f"{_premium('protected', '🛡️')} <i>Sesión privada · datos protegidos · acciones auditadas</i>"
     )
@@ -236,6 +234,60 @@ def _summary() -> tuple[str, dict]:
         return text, markup
     finally:
         db.close()
+
+
+def _report() -> tuple[str, dict]:
+    enterprise = enterprise_bridge.accounts()
+    connected = sum(str(item["status"]).upper() == "CONNECTED" for item in enterprise)
+    pending = sum(str(item["status"]).upper() in {"PENDING", "SYNCING"} for item in enterprise)
+    errors = sum(str(item["status"]).upper() == "ERROR" for item in enterprise)
+    messages_24h = enterprise_bridge.message_count_since(
+        datetime.now(timezone.utc) - timedelta(hours=24)
+    )
+    queued = len(list(_redis.scan_iter(match="mailctl:imap_pending:*", count=200)))
+    text = (
+        f"{_premium('live', '📈')} <b>REPORTE OPERATIVO · 24 HORAS</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"{_premium('accounts', '📨')} Cuentas: <b>{len(enterprise)}</b>\n"
+        f"{_premium('connected', '🟢')} Conectadas: <b>{connected}</b>\n"
+        f"{_premium('pending', '🟡')} Pendientes: <b>{pending}</b>\n"
+        f"{_premium('error', '🔴')} Con error: <b>{errors}</b>\n"
+        f"✉️ Mensajes recibidos: <b>{messages_24h}</b>\n"
+        f"⚙️ Tareas en cola: <b>{queued}</b>\n\n"
+        f"{_premium('protected', '🛡️')} <i>Datos consultados en tiempo real</i>"
+    )
+    return text, {"inline_keyboard": [[
+        {"text": "🔄 Actualizar reporte", "callback_data": "report:show", "style": "success"},
+        {"text": "🟡 Ver pendientes", "callback_data": "pending:show", "style": "primary"},
+    ]]}
+
+
+def _pending_accounts() -> tuple[str, dict]:
+    rows = [
+        item for item in enterprise_bridge.accounts()
+        if str(item["status"]).upper() != "CONNECTED"
+    ]
+    lines = [
+        f"{_premium('pending', '🟡')} <b>CUENTAS PENDIENTES</b>",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        f"\nRequieren atención: <b>{len(rows)}</b>",
+    ]
+    buttons: list[list[dict[str, str]]] = []
+    for item in rows[:12]:
+        status = str(item["status"]).upper()
+        lines.append(
+            f"\n• <code>{html.escape(_mask_email(str(item['email'])))}</code>"
+            f"\n  {html.escape(str(item['provider']))} · <b>{html.escape(status)}</b>"
+        )
+        buttons.append([{
+            "text": f"🔄 Reintentar {_mask_email(str(item['email']))}",
+            "callback_data": f"esync:{item['id']}",
+            "style": "success",
+        }])
+    if not rows:
+        lines.append("\n✅ Todas las cuentas están conectadas.")
+    buttons.append([{"text": "🔄 Actualizar", "callback_data": "pending:show", "style": "primary"}])
+    return "\n".join(lines), {"inline_keyboard": buttons}
 
 
 def _alerts(page: int = 0, service: str = "all") -> tuple[str, dict]:
@@ -318,6 +370,12 @@ def _alerts(page: int = 0, service: str = "all") -> tuple[str, dict]:
         )
         for index in range(0, len(filter_buttons), 3):
             buttons.append(filter_buttons[index:index + 3])
+        if total:
+            buttons.append([{
+                "text": "🧹 Resolver todas",
+                "callback_data": "resolveall:ask",
+                "style": "danger",
+            }])
         return "\n".join(lines), {"inline_keyboard": buttons}
     finally:
         db.close()
@@ -374,6 +432,19 @@ def _resolve_alert(alert_id: int) -> str:
         db.commit()
         _audit("resolve_alert", str(alert_id))
         return f"✅ Alerta #{alert_id} marcada como resuelta."
+    finally:
+        db.close()
+
+
+def _resolve_all_alerts() -> str:
+    db = SessionLocal()
+    try:
+        total = db.query(Alert).filter(Alert.resolved.is_(False)).update(
+            {Alert.resolved: True}, synchronize_session=False
+        )
+        db.commit()
+        _audit("resolve_all_alerts", str(total))
+        return f"✅ Se marcaron como resueltas <b>{total}</b> alertas pendientes."
     finally:
         db.close()
 
@@ -827,13 +898,25 @@ def _handle_callback(update: dict) -> None:
         _edit(callback, _queue_sync(int(data.split(":")[1])))
     elif data.startswith("esync:"):
         _edit(callback, _queue_enterprise_sync(data.split(":", 1)[1]))
-    elif data.startswith("netflix:"):
-        text, markup = _netflix_link(account_id=int(data.split(":", 1)[1]))
-        _edit(callback, text, markup)
     elif data == "status:show":
         _edit(callback, _status(), {
             "inline_keyboard": [[{"text": "🔄 Actualizar estado", "callback_data": "status:show", "style": "success"}]]
         })
+    elif data == "report:show":
+        text, markup = _report()
+        _edit(callback, text, markup)
+    elif data == "pending:show":
+        text, markup = _pending_accounts()
+        _edit(callback, text, markup)
+    elif data == "resolveall:ask":
+        _edit(callback, "⚠️ <b>CONFIRMAR LIMPIEZA</b>\n\n¿Marcar todas las alertas pendientes como resueltas?", {
+            "inline_keyboard": [[
+                {"text": "✅ Confirmar", "callback_data": "resolveall:yes", "style": "success"},
+                {"text": "Cancelar", "callback_data": "alerts:0:all", "style": "danger"},
+            ]]
+        })
+    elif data == "resolveall:yes":
+        _edit(callback, _resolve_all_alerts())
     elif data == "syncall:ask":
         _edit(
             callback,
@@ -864,6 +947,12 @@ def _handle_message(update: dict) -> None:
     elif normalized in {"/resumen", "🏠 panel"}:
         body, markup = _summary()
         send_message(body, reply_markup=markup)
+    elif normalized in {"/reporte", "📈 reporte"}:
+        body, markup = _report()
+        send_message(body, reply_markup=markup)
+    elif normalized in {"/pendientes", "🟡 pendientes"}:
+        body, markup = _pending_accounts()
+        send_message(body, reply_markup=markup)
     elif normalized in {"/alertas", "🚨 alertas"}:
         body, markup = _alerts()
         send_message(body, reply_markup=markup)
@@ -882,25 +971,11 @@ def _handle_message(update: dict) -> None:
                 {"text": "Cancelar", "callback_data": "accounts:0", "style": "danger"},
             ]]},
         )
-    elif normalized == "🔐 código rápido":
-        send_message("🔐 <b>CÓDIGO RÁPIDO</b>\n\nEscribe:\n<code>/codigo correo@dominio.com</code>\n\n⚡ Buscaré únicamente códigos recientes y confiables.")
-    elif normalized == "🎬 netflix":
-        send_message("🎬 <b>ACCESO NETFLIX</b>\n\nEscribe:\n<code>/netflix correo@dominio.com</code>\n\n🔒 El enlace se valida y se entrega una sola vez.")
     elif normalized == "🔎 buscar correo":
         send_message("🔎 <b>BUSCADOR INTELIGENTE</b>\n\nEscribe:\n<code>/buscar correo@dominio.com</code>")
     elif normalized.startswith("/buscar"):
         email = _command_email(text)
         send_message(_search(email) if email else "Uso correcto: <code>/buscar correo@dominio.com</code>")
-    elif normalized.startswith("/codigo"):
-        email = _command_email(text)
-        send_message(_code(email) if email else "Uso correcto: <code>/codigo correo@dominio.com</code>")
-    elif normalized.startswith("/netflix"):
-        email = _command_email(text)
-        if email:
-            body, markup = _netflix_link(email=email)
-            send_message(body, reply_markup=markup)
-        else:
-            send_message("Uso correcto: <code>/netflix correo@dominio.com</code>")
     elif normalized.startswith("/sincronizar"):
         email = _command_email(text)
         send_message(_queue_sync_email(email) if email else "Uso correcto: <code>/sincronizar correo@dominio.com</code>")
@@ -928,11 +1003,11 @@ def run() -> None:
             "commands": json.dumps([
                 {"command": "resumen", "description": "Estado general"},
                 {"command": "menu", "description": "Abrir centro de control"},
+                {"command": "reporte", "description": "Reporte operativo de 24 horas"},
+                {"command": "pendientes", "description": "Cuentas que requieren atención"},
                 {"command": "alertas", "description": "Alertas pendientes"},
                 {"command": "cuentas", "description": "Cuentas conectadas"},
                 {"command": "buscar", "description": "Últimos correos de una cuenta"},
-                {"command": "codigo", "description": "Código reciente confiable"},
-                {"command": "netflix", "description": "Enlace reciente de Netflix"},
                 {"command": "sincronizar", "description": "Sincronizar una cuenta"},
                 {"command": "sincronizar_todo", "description": "Sincronizar todas las cuentas"},
                 {"command": "estado", "description": "Salud operativa del sistema"},

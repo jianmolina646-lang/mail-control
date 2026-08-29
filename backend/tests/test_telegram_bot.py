@@ -51,8 +51,10 @@ def test_menu_exposes_status_and_sync_actions():
     labels = [button["text"] for row in telegram_bot._menu()["keyboard"] for button in row]
     assert "🩺 Sistema" in labels
     assert "⚡ Sincronizar" in labels
-    assert "🔐 Código rápido" in labels
-    assert "🎬 Netflix" in labels
+    assert "📈 Reporte" in labels
+    assert "🟡 Pendientes" in labels
+    assert "🔐 Código rápido" not in labels
+    assert "🎬 Netflix" not in labels
 
 
 def test_send_message_uses_operational_bot_api(monkeypatch):
