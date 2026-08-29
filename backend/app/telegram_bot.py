@@ -26,6 +26,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("mail_control.telegram")
 _redis = redis_lib.Redis.from_url(settings.REDIS_URL)
 _PAGE_SIZE = 5
+_EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 _CODE_PATTERNS = (
     re.compile(
         r"(?i)(?:código|codigo|code|verification|verificación|inicio de sesión)"
@@ -78,7 +79,11 @@ def _menu() -> dict:
             ],
             [
                 {"text": "📬 Cuentas", "style": "primary"},
+                {"text": "🩺 Estado", "style": "success"},
+            ],
+            [
                 {"text": "🧾 Auditoría", "style": "success"},
+                {"text": "🔄 Sincronizar", "style": "primary"},
             ],
             [{"text": "❓ Ayuda", "style": "primary"}],
         ],
@@ -122,6 +127,10 @@ def _help() -> str:
         "/cuentas — estado y sincronización inmediata\n"
         "/buscar correo@dominio.com — últimos mensajes\n"
         "/codigo correo@dominio.com — código reciente confiable\n"
+        "/netflix correo@dominio.com — enlace de acceso reciente\n"
+        "/sincronizar correo@dominio.com — actualizar una cuenta\n"
+        "/sincronizar_todo — actualizar todas con confirmación\n"
+        "/estado — salud de base de datos, Redis y Enterprise\n"
         "/auditoria — últimas operaciones del bot\n\n"
         "🛡 <i>Acceso privado · acciones protegidas con confirmación</i>"
     )
@@ -408,6 +417,60 @@ def _queue_enterprise_sync(account_id: str) -> str:
     email_value = enterprise_bridge.queue_sync(account_id)
     _audit("sync_enterprise", _mask_email(email_value))
     return f"🔄 Sincronización Enterprise programada para <code>{html.escape(_mask_email(email_value))}</code>."
+
+
+def _command_email(text: str) -> str | None:
+    parts = text.split(maxsplit=1)
+    if len(parts) != 2:
+        return None
+    email = parts[1].strip().lower()
+    return email if _EMAIL_PATTERN.fullmatch(email) else None
+
+
+def _queue_sync_email(email: str) -> str:
+    db = SessionLocal()
+    try:
+        account = db.scalar(select(MailAccount).where(func.lower(MailAccount.email) == email.lower()))
+        account_id = account.id if account else None
+    finally:
+        db.close()
+    if account_id is not None:
+        return _queue_sync(account_id)
+    for account in enterprise_bridge.accounts():
+        if str(account["email"]).casefold() == email.casefold():
+            return _queue_enterprise_sync(str(account["id"]))
+    return "❌ Esa cuenta no está registrada en Mail Control."
+
+
+def _status() -> str:
+    started = time.monotonic()
+    checks: list[tuple[str, bool, str]] = []
+    try:
+        checks.append(("Redis", bool(_redis.ping()), "cola y auditoría"))
+    except Exception as exc:
+        checks.append(("Redis", False, type(exc).__name__))
+    db = SessionLocal()
+    try:
+        db.execute(select(1))
+        checks.append(("Base principal", True, "conectada"))
+    except Exception as exc:
+        checks.append(("Base principal", False, type(exc).__name__))
+    finally:
+        db.close()
+    try:
+        checks.append(("Enterprise", enterprise_bridge.health(), "conectado"))
+    except Exception as exc:
+        checks.append(("Enterprise", False, type(exc).__name__))
+    elapsed_ms = round((time.monotonic() - started) * 1000)
+    healthy = all(ok for _, ok, _ in checks)
+    lines = [f"{'🟢' if healthy else '🟠'} <b>ESTADO DE MAIL CONTROL</b>", "━━━━━━━━━━━━━━━━━━━━"]
+    lines.extend(
+        f"{'✅' if ok else '❌'} <b>{html.escape(name)}</b> · {html.escape(detail)}"
+        for name, ok, detail in checks
+    )
+    lines.extend(["", f"⚡ Diagnóstico completado en <b>{elapsed_ms} ms</b>."])
+    _audit("health_check", "healthy" if healthy else "degraded")
+    return "\n".join(lines)
 
 
 def _find_account(email: str) -> tuple[MailAccount | None, list[Message]]:
@@ -718,6 +781,9 @@ def _handle_callback(update: dict) -> None:
         _edit(callback, _queue_sync(int(data.split(":")[1])))
     elif data.startswith("esync:"):
         _edit(callback, _queue_enterprise_sync(data.split(":", 1)[1]))
+    elif data.startswith("netflix:"):
+        text, markup = _netflix_link(account_id=int(data.split(":", 1)[1]))
+        _edit(callback, text, markup)
     elif data == "syncall:ask":
         _edit(
             callback,
@@ -756,10 +822,32 @@ def _handle_message(update: dict) -> None:
         send_message(body, reply_markup=markup)
     elif normalized in {"/auditoria", "🧾 auditoría", "🧾 auditoria"}:
         send_message(_audit_report(), reply_markup=_menu())
-    elif normalized.startswith("/buscar "):
-        send_message(_search(text.split(maxsplit=1)[1].strip()))
-    elif normalized.startswith("/codigo "):
-        send_message(_code(text.split(maxsplit=1)[1].strip()))
+    elif normalized in {"/estado", "🩺 estado"}:
+        send_message(_status(), reply_markup=_menu())
+    elif normalized in {"/sincronizar_todo", "🔄 sincronizar"}:
+        send_message(
+            "⚠️ <b>CONFIRMAR SINCRONIZACIÓN</b>\n\nSe actualizarán todas las cuentas habilitadas.",
+            reply_markup={"inline_keyboard": [[
+                {"text": "✅ Confirmar", "callback_data": "syncall:yes", "style": "success"},
+                {"text": "Cancelar", "callback_data": "accounts:0", "style": "danger"},
+            ]]},
+        )
+    elif normalized.startswith("/buscar"):
+        email = _command_email(text)
+        send_message(_search(email) if email else "Uso correcto: <code>/buscar correo@dominio.com</code>")
+    elif normalized.startswith("/codigo"):
+        email = _command_email(text)
+        send_message(_code(email) if email else "Uso correcto: <code>/codigo correo@dominio.com</code>")
+    elif normalized.startswith("/netflix"):
+        email = _command_email(text)
+        if email:
+            body, markup = _netflix_link(email=email)
+            send_message(body, reply_markup=markup)
+        else:
+            send_message("Uso correcto: <code>/netflix correo@dominio.com</code>")
+    elif normalized.startswith("/sincronizar"):
+        email = _command_email(text)
+        send_message(_queue_sync_email(email) if email else "Uso correcto: <code>/sincronizar correo@dominio.com</code>")
     else:
         send_message("No reconocí ese comando.\n\n" + _help(), reply_markup=_menu())
 
@@ -787,6 +875,10 @@ def run() -> None:
                 {"command": "cuentas", "description": "Cuentas conectadas"},
                 {"command": "buscar", "description": "Últimos correos de una cuenta"},
                 {"command": "codigo", "description": "Código reciente confiable"},
+                {"command": "netflix", "description": "Enlace reciente de Netflix"},
+                {"command": "sincronizar", "description": "Sincronizar una cuenta"},
+                {"command": "sincronizar_todo", "description": "Sincronizar todas las cuentas"},
+                {"command": "estado", "description": "Salud operativa del sistema"},
                 {"command": "auditoria", "description": "Operaciones del bot"},
                 {"command": "ayuda", "description": "Comandos disponibles"},
             ]),

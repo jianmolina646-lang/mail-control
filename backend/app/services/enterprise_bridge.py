@@ -44,6 +44,12 @@ def accounts() -> list[dict]:
     )
 
 
+def health() -> bool:
+    """Return whether the Enterprise database accepts queries."""
+    rows = _rows("SELECT true AS healthy")
+    return bool(rows and rows[0]["healthy"])
+
+
 def recent_messages(email: str, limit: int = 8) -> list[dict]:
     return _rows(
         """
