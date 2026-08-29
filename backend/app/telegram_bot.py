@@ -43,6 +43,9 @@ _PREMIUM_EMOJI = {
     "audit": "5456623351042694411",
     "help": "5866185084427572234",
     "sync": "5244758760429213978",
+    "health_title": "5438300999083113828",
+    "health_component": "5436196151575459790",
+    "diagnostics": "5436068999068662274",
 }
 _CODE_PATTERNS = (
     re.compile(
@@ -583,12 +586,21 @@ def _status() -> str:
         checks.append(("Enterprise", False, type(exc).__name__))
     elapsed_ms = round((time.monotonic() - started) * 1000)
     healthy = all(ok for _, ok, _ in checks)
-    lines = [f"{'🟢' if healthy else '🟠'} <b>ESTADO DE MAIL CONTROL</b>", "━━━━━━━━━━━━━━━━━━━━"]
+    state = "OPERATIVO" if healthy else "REQUIERE ATENCIÓN"
+    lines = [
+        f"{_premium('health_title', '🩺')} <b>ESTADO DE MAIL CONTROL</b>",
+        f"<i>{state}</i>",
+        "━━━━━━━━━━━━━━━━━━━━",
+    ]
     lines.extend(
-        f"{'✅' if ok else '❌'} <b>{html.escape(name)}</b> · {html.escape(detail)}"
+        f"{_premium('health_component', '⚙️')} <b>{html.escape(name)}</b> · "
+        f"{'Operativo' if ok else 'Error'} · {html.escape(detail)}"
         for name, ok, detail in checks
     )
-    lines.extend(["", f"⚡ Diagnóstico completado en <b>{elapsed_ms} ms</b>."])
+    lines.extend([
+        "",
+        f"{_premium('diagnostics', '⚡')} Diagnóstico completado en <b>{elapsed_ms} ms</b>.",
+    ])
     _audit("health_check", "healthy" if healthy else "degraded")
     return "\n".join(lines)
 
