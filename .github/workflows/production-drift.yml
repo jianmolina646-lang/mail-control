@@ -31,9 +31,6 @@ jobs:
           production = Path("/home/deploy/mail-control-enterprise")
           roots = ("src", "frontend/src", "frontend/public", "alembic")
           files = (
-              "Dockerfile",
-              "compose.yaml",
-              "pyproject.toml",
               "frontend/Dockerfile",
               "frontend/package.json",
               "frontend/package-lock.json",

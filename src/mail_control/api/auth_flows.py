@@ -189,7 +189,10 @@ async def oauth_exchange(
     if not raw:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid or expired login ticket")
     payload: dict[str, object] = json.loads(raw)
-    set_refresh_cookie(response, payload["refresh_token"])
+    refresh_token = payload.get("refresh_token")
+    if not isinstance(refresh_token, str):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid login ticket")
+    set_refresh_cookie(response, refresh_token)
     payload.pop("refresh_token", None)
     return payload
 
