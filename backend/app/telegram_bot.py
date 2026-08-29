@@ -160,26 +160,20 @@ def _summary() -> tuple[str, dict]:
     try:
         legacy_rows = db.scalars(select(MailAccount)).all()
         enterprise_rows = enterprise_bridge.accounts()
-        enterprise_emails = {str(item["email"]).casefold() for item in enterprise_rows}
-        accounts = len(enterprise_rows) + sum(
-            item.email.casefold() not in enterprise_emails for item in legacy_rows
-        )
-        legacy_connected = db.scalar(
-            select(func.count(MailAccount.id)).where(MailAccount.last_status == "ok")
-        ) or 0
-        legacy_errors = db.scalar(
-            select(func.count(MailAccount.id)).where(MailAccount.last_status == "error")
-        ) or 0
-        connected = sum(str(item["status"]).upper() == "CONNECTED" for item in enterprise_rows)
-        connected += sum(
-            item.last_status == "ok" and item.email.casefold() not in enterprise_emails
-            for item in legacy_rows
-        )
-        errors = sum(str(item["status"]).upper() == "ERROR" for item in enterprise_rows)
-        errors += sum(
-            item.last_status == "error" and item.email.casefold() not in enterprise_emails
-            for item in legacy_rows
-        )
+        # Enterprise is the active Mail Control workspace. Legacy is retained only
+        # as an emergency fallback and must not inflate production counters.
+        if enterprise_rows:
+            accounts = len(enterprise_rows)
+            connected = sum(
+                str(item["status"]).upper() == "CONNECTED" for item in enterprise_rows
+            )
+            errors = sum(
+                str(item["status"]).upper() == "ERROR" for item in enterprise_rows
+            )
+        else:
+            accounts = len(legacy_rows)
+            connected = sum(item.last_status == "ok" for item in legacy_rows)
+            errors = sum(item.last_status == "error" for item in legacy_rows)
         open_alerts = db.scalar(
             select(func.count(Alert.id)).where(Alert.resolved.is_(False))
         ) or 0
@@ -354,14 +348,12 @@ def _accounts(page: int = 0) -> tuple[str, dict]:
     db = SessionLocal()
     try:
         enterprise = enterprise_bridge.accounts()
-        enterprise_emails = {str(item["email"]).casefold() for item in enterprise}
-        legacy = [
-            item for item in db.scalars(select(MailAccount).order_by(MailAccount.email)).all()
-            if item.email.casefold() not in enterprise_emails
-        ]
-        combined: list[tuple[str, object]] = [
-            ("enterprise", item) for item in enterprise
-        ] + [("legacy", item) for item in legacy]
+        legacy = list(db.scalars(select(MailAccount).order_by(MailAccount.email)).all())
+        combined: list[tuple[str, object]] = (
+            [("enterprise", item) for item in enterprise]
+            if enterprise
+            else [("legacy", item) for item in legacy]
+        )
         combined.sort(key=lambda item: str(item[1]["email"] if item[0] == "enterprise" else item[1].email).casefold())
         total = len(combined)
         rows = combined[page * _PAGE_SIZE:(page + 1) * _PAGE_SIZE]
