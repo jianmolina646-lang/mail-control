@@ -42,6 +42,7 @@ _PREMIUM_EMOJI = {
     "system": "6008224489039466126",
     "audit": "5456623351042694411",
     "help": "5866185084427572234",
+    "sync": "5244758760429213978",
 }
 _CODE_PATTERNS = (
     re.compile(
@@ -115,24 +116,24 @@ def _menu() -> dict:
     return {
         "keyboard": [
             [
-                {"text": "🏠 Panel", "style": "primary", "icon_custom_emoji_id": _PREMIUM_EMOJI["executive"]},
-                {"text": "📨 Cuentas", "style": "primary", "icon_custom_emoji_id": _PREMIUM_EMOJI["accounts"]},
+                {"text": "Panel", "style": "primary", "icon_custom_emoji_id": _PREMIUM_EMOJI["executive"]},
+                {"text": "Cuentas", "style": "primary", "icon_custom_emoji_id": _PREMIUM_EMOJI["accounts"]},
             ],
             [
-                {"text": "📈 Reporte", "style": "success", "icon_custom_emoji_id": _PREMIUM_EMOJI["live"]},
-                {"text": "🟡 Pendientes", "style": "primary", "icon_custom_emoji_id": _PREMIUM_EMOJI["pending"]},
+                {"text": "Reporte", "style": "success", "icon_custom_emoji_id": _PREMIUM_EMOJI["live"]},
+                {"text": "Pendientes", "style": "primary", "icon_custom_emoji_id": _PREMIUM_EMOJI["pending"]},
             ],
             [
-                {"text": "🚨 Alertas", "style": "danger", "icon_custom_emoji_id": _PREMIUM_EMOJI["alerts"]},
-                {"text": "🔎 Buscar correo", "style": "primary", "icon_custom_emoji_id": _PREMIUM_EMOJI["search"]},
+                {"text": "Alertas", "style": "danger", "icon_custom_emoji_id": _PREMIUM_EMOJI["alerts"]},
+                {"text": "Buscar correo", "style": "primary", "icon_custom_emoji_id": _PREMIUM_EMOJI["search"]},
             ],
             [
-                {"text": "⚡ Sincronizar", "style": "success"},
-                {"text": "🩺 Sistema", "style": "success", "icon_custom_emoji_id": _PREMIUM_EMOJI["system"]},
+                {"text": "Sincronizar", "style": "success", "icon_custom_emoji_id": _PREMIUM_EMOJI["sync"]},
+                {"text": "Sistema", "style": "success", "icon_custom_emoji_id": _PREMIUM_EMOJI["system"]},
             ],
             [
-                {"text": "🛡 Auditoría", "style": "primary", "icon_custom_emoji_id": _PREMIUM_EMOJI["audit"]},
-                {"text": "✨ Ayuda", "style": "primary", "icon_custom_emoji_id": _PREMIUM_EMOJI["help"]},
+                {"text": "Auditoría", "style": "primary", "icon_custom_emoji_id": _PREMIUM_EMOJI["audit"]},
+                {"text": "Ayuda", "style": "primary", "icon_custom_emoji_id": _PREMIUM_EMOJI["help"]},
             ],
         ],
         "resize_keyboard": True,
@@ -942,28 +943,28 @@ def _handle_message(update: dict) -> None:
     normalized = text.lower()
     _audit("command", normalized.split(maxsplit=1)[0][:40])
 
-    if normalized in {"/start", "/menu", "/ayuda", "/help", "✨ ayuda"}:
+    if normalized in {"/start", "/menu", "/ayuda", "/help", "ayuda"}:
         send_message(_help(), reply_markup=_menu())
-    elif normalized in {"/resumen", "🏠 panel"}:
+    elif normalized in {"/resumen", "panel"}:
         body, markup = _summary()
         send_message(body, reply_markup=markup)
-    elif normalized in {"/reporte", "📈 reporte"}:
+    elif normalized in {"/reporte", "reporte"}:
         body, markup = _report()
         send_message(body, reply_markup=markup)
-    elif normalized in {"/pendientes", "🟡 pendientes"}:
+    elif normalized in {"/pendientes", "pendientes"}:
         body, markup = _pending_accounts()
         send_message(body, reply_markup=markup)
-    elif normalized in {"/alertas", "🚨 alertas"}:
+    elif normalized in {"/alertas", "alertas"}:
         body, markup = _alerts()
         send_message(body, reply_markup=markup)
-    elif normalized in {"/cuentas", "📨 cuentas"}:
+    elif normalized in {"/cuentas", "cuentas"}:
         body, markup = _accounts()
         send_message(body, reply_markup=markup)
-    elif normalized in {"/auditoria", "🛡 auditoría", "🛡 auditoria"}:
+    elif normalized in {"/auditoria", "auditoría", "auditoria"}:
         send_message(_audit_report(), reply_markup=_menu())
-    elif normalized in {"/estado", "🩺 sistema"}:
+    elif normalized in {"/estado", "sistema"}:
         send_message(_status(), reply_markup=_menu())
-    elif normalized in {"/sincronizar_todo", "⚡ sincronizar"}:
+    elif normalized in {"/sincronizar_todo", "sincronizar"}:
         send_message(
             "⚠️ <b>CONFIRMAR SINCRONIZACIÓN</b>\n\nSe actualizarán todas las cuentas habilitadas.",
             reply_markup={"inline_keyboard": [[
@@ -971,7 +972,7 @@ def _handle_message(update: dict) -> None:
                 {"text": "Cancelar", "callback_data": "accounts:0", "style": "danger"},
             ]]},
         )
-    elif normalized == "🔎 buscar correo":
+    elif normalized == "buscar correo":
         send_message("🔎 <b>BUSCADOR INTELIGENTE</b>\n\nEscribe:\n<code>/buscar correo@dominio.com</code>")
     elif normalized.startswith("/buscar"):
         email = _command_email(text)
