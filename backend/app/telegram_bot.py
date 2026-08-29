@@ -223,12 +223,12 @@ def _summary() -> tuple[str, dict]:
         markup = {
             "inline_keyboard": [
                 [
-                    {"text": "🚨 Alertas", "callback_data": "alerts:0:all", "style": "danger"},
-                    {"text": "📨 Cuentas", "callback_data": "accounts:0", "style": "primary"},
+                    {"text": "Alertas", "callback_data": "alerts:0:all", "style": "danger", "icon_custom_emoji_id": _PREMIUM_EMOJI["alerts"]},
+                    {"text": "Cuentas", "callback_data": "accounts:0", "style": "primary", "icon_custom_emoji_id": _PREMIUM_EMOJI["accounts"]},
                 ],
                 [
-                    {"text": "⚡ Actualizar todo", "callback_data": "syncall:ask", "style": "success"},
-                    {"text": "🩺 Estado", "callback_data": "status:show", "style": "primary"},
+                    {"text": "Actualizar todo", "callback_data": "syncall:ask", "style": "success", "icon_custom_emoji_id": _PREMIUM_EMOJI["sync"]},
+                    {"text": "Estado", "callback_data": "status:show", "style": "primary", "icon_custom_emoji_id": _PREMIUM_EMOJI["system"]},
                 ],
             ]
         }
@@ -258,8 +258,8 @@ def _report() -> tuple[str, dict]:
         f"{_premium('protected', '🛡️')} <i>Datos consultados en tiempo real</i>"
     )
     return text, {"inline_keyboard": [[
-        {"text": "🔄 Actualizar reporte", "callback_data": "report:show", "style": "success"},
-        {"text": "🟡 Ver pendientes", "callback_data": "pending:show", "style": "primary"},
+        {"text": "Actualizar reporte", "callback_data": "report:show", "style": "success", "icon_custom_emoji_id": _PREMIUM_EMOJI["sync"]},
+        {"text": "Ver pendientes", "callback_data": "pending:show", "style": "primary", "icon_custom_emoji_id": _PREMIUM_EMOJI["pending"]},
     ]]}
 
 
@@ -281,13 +281,14 @@ def _pending_accounts() -> tuple[str, dict]:
             f"\n  {html.escape(str(item['provider']))} · <b>{html.escape(status)}</b>"
         )
         buttons.append([{
-            "text": f"🔄 Reintentar {_mask_email(str(item['email']))}",
+            "text": f"Reintentar {_mask_email(str(item['email']))}",
             "callback_data": f"esync:{item['id']}",
             "style": "success",
+            "icon_custom_emoji_id": _PREMIUM_EMOJI["sync"],
         }])
     if not rows:
         lines.append("\n✅ Todas las cuentas están conectadas.")
-    buttons.append([{"text": "🔄 Actualizar", "callback_data": "pending:show", "style": "primary"}])
+    buttons.append([{"text": "Actualizar", "callback_data": "pending:show", "style": "primary", "icon_custom_emoji_id": _PREMIUM_EMOJI["sync"]}])
     return "\n".join(lines), {"inline_keyboard": buttons}
 
 
@@ -373,9 +374,10 @@ def _alerts(page: int = 0, service: str = "all") -> tuple[str, dict]:
             buttons.append(filter_buttons[index:index + 3])
         if total:
             buttons.append([{
-                "text": "🧹 Resolver todas",
+                "text": "Resolver todas",
                 "callback_data": "resolveall:ask",
                 "style": "danger",
+                "icon_custom_emoji_id": _PREMIUM_EMOJI["alerts"],
             }])
         return "\n".join(lines), {"inline_keyboard": buttons}
     finally:
@@ -407,7 +409,7 @@ def _alert_detail(alert_id: int) -> tuple[str, dict]:
             f"<b>Fecha:</b> {item.created_at:%d/%m/%Y %H:%M} UTC"
         )
         buttons = [[
-            {"text": "📨 Ver en panel", "url": f"{settings.FRONTEND_URL.rstrip('/')}/alertas"},
+            {"text": "Ver en panel", "url": f"{settings.FRONTEND_URL.rstrip('/')}/alertas", "icon_custom_emoji_id": _PREMIUM_EMOJI["accounts"]},
         ]]
         if not item.resolved:
             buttons.insert(0, [{
@@ -500,7 +502,7 @@ def _accounts(page: int = 0) -> tuple[str, dict]:
             navigation.append({"text": "Siguiente ▶️", "callback_data": f"accounts:{page + 1}", "style": "primary"})
         if navigation:
             buttons.append(navigation)
-        buttons.append([{"text": "🔄 Sincronizar todas", "callback_data": "syncall:ask", "style": "success"}])
+        buttons.append([{"text": "Sincronizar todas", "callback_data": "syncall:ask", "style": "success", "icon_custom_emoji_id": _PREMIUM_EMOJI["sync"]}])
         return "\n".join(lines), {"inline_keyboard": buttons}
     finally:
         db.close()
@@ -901,7 +903,7 @@ def _handle_callback(update: dict) -> None:
         _edit(callback, _queue_enterprise_sync(data.split(":", 1)[1]))
     elif data == "status:show":
         _edit(callback, _status(), {
-            "inline_keyboard": [[{"text": "🔄 Actualizar estado", "callback_data": "status:show", "style": "success"}]]
+            "inline_keyboard": [[{"text": "Actualizar estado", "callback_data": "status:show", "style": "success", "icon_custom_emoji_id": _PREMIUM_EMOJI["sync"]}]]
         })
     elif data == "report:show":
         text, markup = _report()
