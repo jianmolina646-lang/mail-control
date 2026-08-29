@@ -69,26 +69,63 @@ class RecoveryConfirm(BaseModel):
 def provider_config(provider: Provider, settings: Settings) -> tuple[str, str, str, str]:
     if provider == "google":
         if not settings.google_client_id or not settings.google_client_secret:
-            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Google login is not configured")
-        return settings.google_client_id, settings.google_client_secret, settings.google_login_redirect_uri, "openid email profile"
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE, "Google login is not configured"
+            )
+        return (
+            settings.google_client_id,
+            settings.google_client_secret,
+            settings.google_login_redirect_uri,
+            "openid email profile",
+        )
     if not settings.microsoft_client_id or not settings.microsoft_client_secret:
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Microsoft login is not configured")
-    return settings.microsoft_client_id, settings.microsoft_client_secret, settings.microsoft_login_redirect_uri, "openid email profile User.Read"
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, "Microsoft login is not configured"
+        )
+    return (
+        settings.microsoft_client_id,
+        settings.microsoft_client_secret,
+        settings.microsoft_login_redirect_uri,
+        "openid email profile User.Read",
+    )
 
 
 @router.post("/oauth/{provider}/authorize", response_model=AuthorizationUrlResponse)
-async def oauth_authorize(provider: Provider, data: OAuthStartRequest, request: Request) -> AuthorizationUrlResponse:
+async def oauth_authorize(
+    provider: Provider, data: OAuthStartRequest, request: Request
+) -> AuthorizationUrlResponse:
     settings = get_settings()
     client_id, _, redirect_uri, scope = provider_config(provider, settings)
     state = secrets.token_urlsafe(32)
-    await request.app.state.resources.redis.setex(f"login:oauth:{state}", 600, json.dumps({"provider": provider, "tenant_slug": data.tenant_slug}))
-    base = "https://accounts.google.com/o/oauth2/v2/auth" if provider == "google" else "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"
-    params = {"client_id": client_id, "redirect_uri": redirect_uri, "response_type": "code", "scope": scope, "state": state, "prompt": "select_account"}
+    await request.app.state.resources.redis.setex(
+        f"login:oauth:{state}",
+        600,
+        json.dumps({"provider": provider, "tenant_slug": data.tenant_slug}),
+    )
+    base = (
+        "https://accounts.google.com/o/oauth2/v2/auth"
+        if provider == "google"
+        else "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"
+    )
+    params = {
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": scope,
+        "state": state,
+        "prompt": "select_account",
+    }
     return AuthorizationUrlResponse(authorization_url=f"{base}?{urlencode(params)}")
 
 
 @router.get("/oauth/{provider}/callback")
-async def oauth_callback(provider: Provider, code: str, state: str, request: Request, session: Annotated[AsyncSession, Depends(database_session)]) -> RedirectResponse:
+async def oauth_callback(
+    provider: Provider,
+    code: str,
+    state: str,
+    request: Request,
+    session: Annotated[AsyncSession, Depends(database_session)],
+) -> RedirectResponse:
     settings = get_settings()
     raw = await request.app.state.resources.redis.getdel(f"login:oauth:{state}")
     if not raw:
@@ -97,14 +134,33 @@ async def oauth_callback(provider: Provider, code: str, state: str, request: Req
     if payload.get("provider") != provider:
         return RedirectResponse(f"{settings.frontend_url}/login?oauth_error=invalid")
     client_id, client_secret, redirect_uri, _ = provider_config(provider, settings)
-    token_url = "https://oauth2.googleapis.com/token" if provider == "google" else "https://login.microsoftonline.com/common/oauth2/v2.0/token"
+    token_url = (
+        "https://oauth2.googleapis.com/token"
+        if provider == "google"
+        else "https://login.microsoftonline.com/common/oauth2/v2.0/token"
+    )
     async with httpx.AsyncClient(timeout=15) as client:
-        token_response = await client.post(token_url, data={"client_id": client_id, "client_secret": client_secret, "code": code, "redirect_uri": redirect_uri, "grant_type": "authorization_code"})
+        token_response = await client.post(
+            token_url,
+            data={
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "code": code,
+                "redirect_uri": redirect_uri,
+                "grant_type": "authorization_code",
+            },
+        )
         if token_response.is_error:
             return RedirectResponse(f"{settings.frontend_url}/login?oauth_error=exchange")
         access_token = token_response.json().get("access_token", "")
-        user_url = "https://openidconnect.googleapis.com/v1/userinfo" if provider == "google" else "https://graph.microsoft.com/oidc/userinfo"
-        user_response = await client.get(user_url, headers={"Authorization": f"Bearer {access_token}"})
+        user_url = (
+            "https://openidconnect.googleapis.com/v1/userinfo"
+            if provider == "google"
+            else "https://graph.microsoft.com/oidc/userinfo"
+        )
+        user_response = await client.get(
+            user_url, headers={"Authorization": f"Bearer {access_token}"}
+        )
     if user_response.is_error:
         return RedirectResponse(f"{settings.frontend_url}/login?oauth_error=profile")
     profile = user_response.json()
@@ -113,11 +169,15 @@ async def oauth_callback(provider: Provider, code: str, state: str, request: Req
         return RedirectResponse(f"{settings.frontend_url}/login?oauth_error=email")
     user_agent, ip_address = client_metadata(request)
     try:
-        tokens = await identity_service(session).login_external(payload["tenant_slug"], email, user_agent=user_agent, ip_address=ip_address)
+        tokens = await identity_service(session).login_external(
+            payload["tenant_slug"], email, user_agent=user_agent, ip_address=ip_address
+        )
     except AuthenticationError:
         return RedirectResponse(f"{settings.frontend_url}/login?oauth_error=unauthorized")
     ticket = secrets.token_urlsafe(40)
-    await request.app.state.resources.redis.setex(f"login:ticket:{ticket}", 60, tokens.model_dump_json())
+    await request.app.state.resources.redis.setex(
+        f"login:ticket:{ticket}", 60, tokens.model_dump_json()
+    )
     return RedirectResponse(f"{settings.frontend_url}/login?ticket={ticket}")
 
 
@@ -133,7 +193,9 @@ async def oauth_exchange(data: TicketRequest, request: Request, response: Respon
 
 
 def code_digest(settings: Settings, tenant_slug: str, email: str, code: str) -> str:
-    return hmac.new(settings.app_secret_key.encode(), f"{tenant_slug}|{email}|{code}".encode(), hashlib.sha256).hexdigest()
+    return hmac.new(
+        settings.app_secret_key.encode(), f"{tenant_slug}|{email}|{code}".encode(), hashlib.sha256
+    ).hexdigest()
 
 
 def send_recovery_email(settings: Settings, recipient: str, code: str) -> None:
@@ -143,7 +205,11 @@ def send_recovery_email(settings: Settings, recipient: str, code: str) -> None:
     message["Subject"] = "Código para cambiar tu contraseña · Mail Control"
     message["From"] = settings.smtp_from or settings.smtp_username
     message["To"] = recipient
-    message.set_content(f"Tu código de recuperación es: {code}\n\nCaduca en 10 minutos y solo puede utilizarse una vez.\nSi no solicitaste este cambio, ignora este mensaje.")
+    message.set_content(
+        f"Tu código de recuperación es: {code}\n\n"
+        "Caduca en 10 minutos y solo puede utilizarse una vez.\n"
+        "Si no solicitaste este cambio, ignora este mensaje."
+    )
     context = ssl.create_default_context()
     with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=15) as smtp:
         if settings.smtp_use_tls:
@@ -153,24 +219,44 @@ def send_recovery_email(settings: Settings, recipient: str, code: str) -> None:
 
 
 @router.post("/password/request", status_code=status.HTTP_202_ACCEPTED)
-async def password_request(data: RecoveryRequest, request: Request, session: Annotated[AsyncSession, Depends(database_session)]):
+async def password_request(
+    data: RecoveryRequest,
+    request: Request,
+    session: Annotated[AsyncSession, Depends(database_session)],
+):
     settings = get_settings()
     tenant = await identity_service(session).repository.tenant_by_slug(data.tenant_slug)
     user = None
     if tenant is not None:
         from mail_control.infrastructure.database.tenant import set_tenant_context
+
         await set_tenant_context(session, tenant.id)
         user = await identity_service(session).repository.user_by_email(tenant.id, data.email)
     if user and user.is_active:
         code = f"{secrets.randbelow(1_000_000):06d}"
         key = f"password:reset:{data.tenant_slug}:{data.email.strip().casefold()}"
-        await request.app.state.resources.redis.setex(key, 600, json.dumps({"digest": code_digest(settings, data.tenant_slug, data.email.strip().casefold(), code), "attempts": 0}))
+        await request.app.state.resources.redis.setex(
+            key,
+            600,
+            json.dumps(
+                {
+                    "digest": code_digest(
+                        settings, data.tenant_slug, data.email.strip().casefold(), code
+                    ),
+                    "attempts": 0,
+                }
+            ),
+        )
         await asyncio.to_thread(send_recovery_email, settings, user.email, code)
     return {"detail": "If the account exists, a recovery code was sent."}
 
 
 @router.post("/password/confirm", status_code=status.HTTP_204_NO_CONTENT)
-async def password_confirm(data: RecoveryConfirm, request: Request, session: Annotated[AsyncSession, Depends(database_session)]):
+async def password_confirm(
+    data: RecoveryConfirm,
+    request: Request,
+    session: Annotated[AsyncSession, Depends(database_session)],
+):
     settings = get_settings()
     email = data.email.strip().casefold()
     key = f"password:reset:{data.tenant_slug}:{email}"

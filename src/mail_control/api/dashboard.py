@@ -21,8 +21,8 @@ from mail_control.modules.dashboard.schemas import (
     AlertPage,
     AnalysisPage,
     DashboardSummary,
-    MessagePage,
     MessageContent,
+    MessagePage,
     MessageStateUpdate,
 )
 from mail_control.modules.identity.models import RoleName
