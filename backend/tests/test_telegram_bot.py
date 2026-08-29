@@ -51,3 +51,16 @@ def test_menu_exposes_status_and_sync_actions():
     labels = [button["text"] for row in telegram_bot._menu()["keyboard"] for button in row]
     assert "🩺 Estado" in labels
     assert "🔄 Sincronizar" in labels
+
+
+def test_send_message_uses_operational_bot_api(monkeypatch):
+    calls = []
+    monkeypatch.setattr(telegram_bot.settings, "TELEGRAM_ADMIN_CHAT_ID", 123)
+    monkeypatch.setattr(
+        telegram_bot,
+        "_api",
+        lambda method, payload, timeout: calls.append((method, payload, timeout)) or {"ok": True},
+    )
+    assert telegram_bot.send_message("hola")
+    assert calls[0][0] == "sendMessage"
+    assert calls[0][1]["chat_id"] == 123

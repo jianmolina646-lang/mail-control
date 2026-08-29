@@ -19,7 +19,6 @@ from sqlalchemy.orm import joinedload
 from .core.config import settings
 from .core.db import SessionLocal
 from .models.models import AgentCodeReceipt, Alert, MailAccount, Message, Subscription
-from .services.telegram_notifier import send_message
 from .services import enterprise_bridge
 
 logging.basicConfig(level=logging.INFO)
@@ -68,6 +67,26 @@ def _api(method: str, payload: dict[str, object] | None = None, timeout: int = 4
     )
     with request.urlopen(req, timeout=timeout) as response:
         return json.loads(response.read().decode())
+
+
+def send_message(text: str, *, reply_markup: dict | None = None) -> bool:
+    """Reply through the operational bot, never through the backup notifier."""
+    payload: dict[str, object] = {
+        "chat_id": settings.TELEGRAM_ADMIN_CHAT_ID,
+        "text": text,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": "true",
+    }
+    if reply_markup is not None:
+        payload["reply_markup"] = json.dumps(reply_markup)
+    try:
+        result = _api("sendMessage", payload, timeout=15)
+        if not result.get("ok"):
+            logger.warning("Telegram rechazó la respuesta del bot: %s", result.get("description"))
+        return bool(result.get("ok"))
+    except Exception as exc:
+        logger.warning("No se pudo responder desde el bot operativo: %s", exc)
+        return False
 
 
 def _menu() -> dict:
