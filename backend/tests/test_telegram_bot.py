@@ -49,8 +49,10 @@ def test_netflix_domain_rejects_lookalikes():
 
 def test_menu_exposes_status_and_sync_actions():
     labels = [button["text"] for row in telegram_bot._menu()["keyboard"] for button in row]
-    assert "🩺 Estado" in labels
-    assert "🔄 Sincronizar" in labels
+    assert "🩺 Sistema" in labels
+    assert "⚡ Sincronizar" in labels
+    assert "🔐 Código rápido" in labels
+    assert "🎬 Netflix" in labels
 
 
 def test_send_message_uses_operational_bot_api(monkeypatch):

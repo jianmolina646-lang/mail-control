@@ -93,18 +93,25 @@ def _menu() -> dict:
     return {
         "keyboard": [
             [
-                {"text": "📊 Resumen", "style": "primary"},
+                {"text": "🏠 Panel", "style": "primary"},
+                {"text": "📨 Cuentas", "style": "primary"},
+            ],
+            [
+                {"text": "🔐 Código rápido", "style": "success"},
+                {"text": "🎬 Netflix", "style": "danger"},
+            ],
+            [
                 {"text": "🚨 Alertas", "style": "danger"},
+                {"text": "🔎 Buscar correo", "style": "primary"},
             ],
             [
-                {"text": "📬 Cuentas", "style": "primary"},
-                {"text": "🩺 Estado", "style": "success"},
+                {"text": "⚡ Sincronizar", "style": "success"},
+                {"text": "🩺 Sistema", "style": "success"},
             ],
             [
-                {"text": "🧾 Auditoría", "style": "success"},
-                {"text": "🔄 Sincronizar", "style": "primary"},
+                {"text": "🛡 Auditoría", "style": "primary"},
+                {"text": "✨ Ayuda", "style": "primary"},
             ],
-            [{"text": "❓ Ayuda", "style": "primary"}],
         ],
         "resize_keyboard": True,
         "is_persistent": True,
@@ -138,20 +145,20 @@ def _audit(action: str, detail: str = "") -> None:
 
 def _help() -> str:
     return (
-        "💠 <b>MAIL CONTROL · CENTRO OPERATIVO</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "<b>Comandos disponibles</b>\n\n"
-        "/resumen — estado general\n"
-        "/alertas — incidencias con filtros y resolución\n"
-        "/cuentas — estado y sincronización inmediata\n"
-        "/buscar correo@dominio.com — últimos mensajes\n"
-        "/codigo correo@dominio.com — código reciente confiable\n"
-        "/netflix correo@dominio.com — enlace de acceso reciente\n"
-        "/sincronizar correo@dominio.com — actualizar una cuenta\n"
-        "/sincronizar_todo — actualizar todas con confirmación\n"
-        "/estado — salud de base de datos, Redis y Enterprise\n"
-        "/auditoria — últimas operaciones del bot\n\n"
-        "🛡 <i>Acceso privado · acciones protegidas con confirmación</i>"
+        "✨ <b>MAIL CONTROL ENTERPRISE</b>\n"
+        "<i>Centro inteligente de operaciones</i>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "🔐 <b>Códigos y accesos</b>\n"
+        "<code>/codigo correo@dominio.com</code>\n"
+        "<code>/netflix correo@dominio.com</code>\n\n"
+        "📨 <b>Correo y sincronización</b>\n"
+        "<code>/buscar correo@dominio.com</code>\n"
+        "<code>/sincronizar correo@dominio.com</code>\n"
+        "<code>/sincronizar_todo</code>\n\n"
+        "📊 <b>Control administrativo</b>\n"
+        "<code>/resumen</code> · <code>/cuentas</code> · <code>/alertas</code>\n"
+        "<code>/estado</code> · <code>/auditoria</code>\n\n"
+        "🛡️ <i>Sesión privada · datos protegidos · acciones auditadas</i>"
     )
 
 
@@ -174,28 +181,32 @@ def _summary() -> tuple[str, dict]:
             accounts = len(legacy_rows)
             connected = sum(item.last_status == "ok" for item in legacy_rows)
             errors = sum(item.last_status == "error" for item in legacy_rows)
+        pending = max(0, accounts - connected - errors)
         open_alerts = db.scalar(
             select(func.count(Alert.id)).where(Alert.resolved.is_(False))
         ) or 0
         subscriptions = db.scalar(select(func.count(Subscription.id))) or 0
         text = (
-            "💠 <b>MAIL CONTROL</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "📊 <b>RESUMEN OPERATIVO</b>\n\n"
-            f"📬 <b>{accounts}</b>  cuentas supervisadas\n"
-            f"🟢 <b>{connected}</b>  conectadas\n"
-            f"🟠 <b>{errors}</b>  requieren revisión\n"
-            f"🔴 <b>{open_alerts}</b>  alertas pendientes\n"
-            f"📺 <b>{subscriptions}</b>  servicios detectados\n\n"
-            "🛡 <i>Supervisión automática activa</i>"
+            "💎 <b>MAIL CONTROL · LIVE</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            "📊 <b>PANEL EJECUTIVO</b>\n\n"
+            f"📨 <b>{accounts}</b> cuentas bajo control\n"
+            f"🟢 <b>{connected}</b> conectadas   🟡 <b>{pending}</b> pendientes\n"
+            f"🔴 <b>{errors}</b> con error   🚨 <b>{open_alerts}</b> alertas\n"
+            f"🎟️ <b>{subscriptions}</b> servicios detectados\n\n"
+            "⚡ <b>Monitoreo en vivo</b>\n"
+            "🔒 <i>Infraestructura protegida y sincronización activa</i>"
         )
         markup = {
             "inline_keyboard": [
                 [
-                    {"text": "🚨 Ver alertas", "callback_data": "alerts:0:all", "style": "danger"},
-                    {"text": "📬 Ver cuentas", "callback_data": "accounts:0", "style": "primary"},
+                    {"text": "🚨 Alertas", "callback_data": "alerts:0:all", "style": "danger"},
+                    {"text": "📨 Cuentas", "callback_data": "accounts:0", "style": "primary"},
                 ],
-                [{"text": "🔄 Sincronizar todas", "callback_data": "syncall:ask", "style": "success"}],
+                [
+                    {"text": "⚡ Actualizar todo", "callback_data": "syncall:ask", "style": "success"},
+                    {"text": "🩺 Estado", "callback_data": "status:show", "style": "primary"},
+                ],
             ]
         }
         return text, markup
@@ -795,6 +806,10 @@ def _handle_callback(update: dict) -> None:
     elif data.startswith("netflix:"):
         text, markup = _netflix_link(account_id=int(data.split(":", 1)[1]))
         _edit(callback, text, markup)
+    elif data == "status:show":
+        _edit(callback, _status(), {
+            "inline_keyboard": [[{"text": "🔄 Actualizar estado", "callback_data": "status:show", "style": "success"}]]
+        })
     elif data == "syncall:ask":
         _edit(
             callback,
@@ -820,22 +835,22 @@ def _handle_message(update: dict) -> None:
     normalized = text.lower()
     _audit("command", normalized.split(maxsplit=1)[0][:40])
 
-    if normalized in {"/start", "/ayuda", "/help", "❓ ayuda"}:
+    if normalized in {"/start", "/menu", "/ayuda", "/help", "✨ ayuda"}:
         send_message(_help(), reply_markup=_menu())
-    elif normalized in {"/resumen", "📊 resumen"}:
+    elif normalized in {"/resumen", "🏠 panel"}:
         body, markup = _summary()
         send_message(body, reply_markup=markup)
     elif normalized in {"/alertas", "🚨 alertas"}:
         body, markup = _alerts()
         send_message(body, reply_markup=markup)
-    elif normalized in {"/cuentas", "📬 cuentas"}:
+    elif normalized in {"/cuentas", "📨 cuentas"}:
         body, markup = _accounts()
         send_message(body, reply_markup=markup)
-    elif normalized in {"/auditoria", "🧾 auditoría", "🧾 auditoria"}:
+    elif normalized in {"/auditoria", "🛡 auditoría", "🛡 auditoria"}:
         send_message(_audit_report(), reply_markup=_menu())
-    elif normalized in {"/estado", "🩺 estado"}:
+    elif normalized in {"/estado", "🩺 sistema"}:
         send_message(_status(), reply_markup=_menu())
-    elif normalized in {"/sincronizar_todo", "🔄 sincronizar"}:
+    elif normalized in {"/sincronizar_todo", "⚡ sincronizar"}:
         send_message(
             "⚠️ <b>CONFIRMAR SINCRONIZACIÓN</b>\n\nSe actualizarán todas las cuentas habilitadas.",
             reply_markup={"inline_keyboard": [[
@@ -843,6 +858,12 @@ def _handle_message(update: dict) -> None:
                 {"text": "Cancelar", "callback_data": "accounts:0", "style": "danger"},
             ]]},
         )
+    elif normalized == "🔐 código rápido":
+        send_message("🔐 <b>CÓDIGO RÁPIDO</b>\n\nEscribe:\n<code>/codigo correo@dominio.com</code>\n\n⚡ Buscaré únicamente códigos recientes y confiables.")
+    elif normalized == "🎬 netflix":
+        send_message("🎬 <b>ACCESO NETFLIX</b>\n\nEscribe:\n<code>/netflix correo@dominio.com</code>\n\n🔒 El enlace se valida y se entrega una sola vez.")
+    elif normalized == "🔎 buscar correo":
+        send_message("🔎 <b>BUSCADOR INTELIGENTE</b>\n\nEscribe:\n<code>/buscar correo@dominio.com</code>")
     elif normalized.startswith("/buscar"):
         email = _command_email(text)
         send_message(_search(email) if email else "Uso correcto: <code>/buscar correo@dominio.com</code>")
@@ -882,6 +903,7 @@ def run() -> None:
         {
             "commands": json.dumps([
                 {"command": "resumen", "description": "Estado general"},
+                {"command": "menu", "description": "Abrir centro de control"},
                 {"command": "alertas", "description": "Alertas pendientes"},
                 {"command": "cuentas", "description": "Cuentas conectadas"},
                 {"command": "buscar", "description": "Últimos correos de una cuenta"},
