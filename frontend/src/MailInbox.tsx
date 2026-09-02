@@ -49,6 +49,8 @@ export function MailInbox() {
   const [pageSize, setPageSize] = useState(PAGE_SIZE);
   const [folderNavOpen, setFolderNavOpen] = useState(true);
   const [showOverview, setShowOverview] = useState(false);
+  const [selectedContent, setSelectedContent] = useState<{ id: string; data: MessageContent } | null>(null);
+  const [selectedContentError, setSelectedContentError] = useState<{ id: string; message: string } | null>(null);
   const loadMoreRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const mailbox = folder === "archivados" ? "archive" : folder === "papelera" ? "trash" : "inbox";
@@ -120,13 +122,31 @@ export function MailInbox() {
   const pageRows = rows.slice(0, pageSize);
   useEffect(() => setPageSize(PAGE_SIZE), [folder, accountId, query, sortBy]);
   const selectedSummary = messages.find((message) => message.id === selectedId) ?? null;
-  const selectedContentQuery = useQuery({
-    queryKey: ["message-content", selectedId],
-    queryFn: () => api<MessageContent>(`/v1/mail/messages/${selectedId}`),
-    enabled: !!selectedId,
-    staleTime: 5 * 60_000,
-  });
-  const selected = selectedSummary ? { ...selectedSummary, body: selectedContentQuery.data?.body || selectedSummary.body, bodyHtml: selectedContentQuery.data?.body_html || selectedSummary.bodyHtml } : null;
+  useEffect(() => {
+    if (!selectedId) return;
+    let cancelled = false;
+    setSelectedContentError(null);
+    void queryClient.fetchQuery({
+      queryKey: ["message-content", selectedId],
+      queryFn: () => api<MessageContent>(`/v1/mail/messages/${encodeURIComponent(selectedId)}`),
+      staleTime: 5 * 60_000,
+    }).then((data) => {
+      if (!cancelled) setSelectedContent({ id: selectedId, data });
+    }).catch((error: unknown) => {
+      if (!cancelled) {
+        const message = error instanceof Error ? error.message : "No fue posible cargar el contenido completo.";
+        setSelectedContentError({ id: selectedId, message });
+      }
+    });
+    return () => { cancelled = true; };
+  }, [queryClient, selectedId]);
+  const currentContent = selectedContent?.id === selectedId ? selectedContent.data : null;
+  const currentContentError = selectedContentError?.id === selectedId ? selectedContentError.message : "";
+  const selected = selectedSummary ? {
+    ...selectedSummary,
+    body: currentContent?.body || currentContentError || selectedSummary.body,
+    bodyHtml: currentContent?.body_html || selectedSummary.bodyHtml,
+  } : null;
   const selectedAccount = selected ? accountById.get(selected.accountId) : undefined;
   const selectedThread = selected ? messages.filter((message) => message.accountId === selected.accountId && message.threadId === selected.threadId) : [];
   const allChecked = pageRows.length > 0 && pageRows.every((row) => checkedIds.has(row.message.id));
