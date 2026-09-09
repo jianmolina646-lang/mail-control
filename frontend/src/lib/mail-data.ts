@@ -28,11 +28,11 @@ export type SyncStatus = "conectada" | "sincronizando" | "requiere-autorizacion"
 export const providerLabels: Record<Provider, string> = { gmail: "Gmail", outlook: "Outlook", hotmail: "Hotmail", live: "Live" };
 export const syncStatusLabels: Record<SyncStatus, string> = { conectada: "Conectada", sincronizando: "Sincronizando", "requiere-autorizacion": "Requiere autorización", "credenciales-vencidas": "Credenciales vencidas", error: "Error de sincronización", pausada: "Pausada" };
 export const attentionStatuses: SyncStatus[] = ["requiere-autorizacion", "credenciales-vencidas", "error", "pausada"];
-export interface MailAccount { id: string; alias: string; email: string; provider: Provider; client: string; platform: string; group: string; country: string; labels: string[]; favorite: boolean; status: SyncStatus; lastSync: string; messageCount: number; statusDetail?: string; }
+export interface MailAccount { id: string; alias: string; email: string; provider: Provider; client: string; platform: string; group: string; country: string; labels: string[]; favorite: boolean; status: SyncStatus; lastSync: string; syncStale?: boolean; messageCount: number; statusDetail?: string; }
 
 export type Risk = "alto" | "medio" | "bajo";
 export interface ThreadEntry { id: string; senderName: string; date: string; body: string; }
-export interface MailMessage { id: string; threadId: string; sender: string; senderName: string; subject: string; preview: string; body: string; bodyHtml?: string; accountId: string; to: string; date: string; time: string; isoDate: string; unread: boolean; starred: boolean; critical?: boolean; risk: Risk; attachments: string[]; categories: FolderId[]; aiSummary: string; aiAction: string; thread?: ThreadEntry[]; }
+export interface MailMessage { id: string; threadId: string; sender: string; senderName: string; subject: string; preview: string; body: string; bodyHtml?: string; accountId: string; to: string; cc?: string; date: string; time: string; isoDate: string; unread: boolean; starred: boolean; critical?: boolean; risk: Risk; attachments: import("./types").Attachment[]; categories: FolderId[]; aiSummary: string; aiAction: string; thread?: ThreadEntry[]; }
 
 export interface SavedView { id: string; label: string; query: string; }
 export const savedViews: SavedView[] = [

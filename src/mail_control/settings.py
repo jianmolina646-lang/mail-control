@@ -60,6 +60,7 @@ class Settings(BaseSettings):
     ai_provider: str = "openai"
     telegram_alerts_file: str | None = None
     telegram_account_alert_dedupe_seconds: int = Field(default=3600, ge=60, le=604800)
+    mail_sync_stale_after_seconds: int = Field(default=900, ge=180, le=86400)
     gmail_push_enabled: bool = False
     gmail_pubsub_topic: str | None = None
     gmail_pubsub_audience: str | None = None

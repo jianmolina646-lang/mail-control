@@ -69,8 +69,15 @@ class FakeSession:
     def __init__(self, account: MailAccount) -> None:
         self.account = account
 
-    async def scalar(self, statement: Any) -> MailAccount:
-        return self.account
+    async def scalars(self, statement: Any) -> Any:
+        class Result:
+            def __init__(self, account: MailAccount) -> None:
+                self.account = account
+
+            def all(self) -> list[MailAccount]:
+                return [self.account]
+
+        return Result(self.account)
 
 
 def settings() -> Settings:

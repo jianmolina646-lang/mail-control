@@ -37,6 +37,8 @@ export interface Account {
   last_error: string | null;
   message_count: number;
   alert_count: number;
+  unread_count: number;
+  folder_counts?: Record<string, number>;
 }
 
 export interface Message {
@@ -55,15 +57,39 @@ export interface Message {
   alert_count: number;
   is_read: boolean;
   is_starred: boolean;
-  mailbox: "inbox" | "archive" | "trash";
+  mailbox: "inbox" | "archive" | "trash" | "sent" | "drafts" | "spam" | "other";
   thread_id: string | null;
+  to?: string[];
+  cc?: string[];
+  attachments?: Attachment[];
+  attachment_count?: number;
+  thread_count?: number;
 }
 
-export interface MessageContent {
+export interface Attachment {
   id: string;
-  body: string | null;
-  body_html: string | null;
+  filename: string;
+  content_type: string;
+  size: number | null;
+  content_id: string | null;
+  is_inline: boolean;
+  download_url: string;
+  inline_url: string | null;
 }
+
+export interface MessageContent extends Message { to: string[]; cc: string[]; attachments: Attachment[]; content_warning?: string | null; attachments_error?: string | null; }
+
+export interface MessagePage extends Page<Message> {
+  total_count: number;
+  unread_count: number;
+  starred_count: number;
+  critical_count: number;
+  unanalyzed_count: number;
+  category_counts: Record<string, number>;
+  folder_counts: Record<string, number>;
+}
+
+export interface MessageCounts { total: number; unread: number; starred: number; critical: number; unanalyzed: number; categories: Record<string, number>; folder_counts: Record<string, number>; archive: number; trash: number; }
 
 export interface Analysis {
   id: string;

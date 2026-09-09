@@ -10,13 +10,12 @@ import httpx
 import structlog
 from redis.exceptions import RedisError
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_object_session
 
 from mail_control.infrastructure.resources import Resources
-from mail_control.modules.mail.crypto import CredentialCipher
 from mail_control.modules.mail.microsoft import (
     MicrosoftError,
     MicrosoftGraphClient,
-    MicrosoftOAuth,
     MicrosoftReauthorizationRequired,
     MicrosoftTransientError,
 )
@@ -26,6 +25,7 @@ from mail_control.modules.mail.models import (
     MailProvider,
     MicrosoftGraphSubscription,
 )
+from mail_control.modules.mail.token_manager import provider_client
 from mail_control.modules.system.telegram_alerts import TelegramAlerts
 from mail_control.settings import Settings
 
@@ -140,33 +140,20 @@ async def enqueue_from_graph_notification(
     return True
 
 
-async def access_token_for_account(
+async def graph_client_for_account(
     *,
     account: MailAccount,
     resources: Resources,
     settings: Settings,
-) -> str:
-    cipher = CredentialCipher(settings.credential_encryption_key or settings.app_secret_key)
-    if (
-        account.encrypted_access_token
-        and account.access_token_expires_at
-        and account.access_token_expires_at > datetime.now(UTC) + timedelta(minutes=2)
-    ):
-        return cipher.decrypt(account.encrypted_access_token)
-    if not settings.microsoft_client_id or not settings.microsoft_client_secret:
-        raise RuntimeError("Microsoft OAuth is not configured")
-    oauth = MicrosoftOAuth(
-        resources.redis,
-        client_id=settings.microsoft_client_id,
-        client_secret=settings.microsoft_client_secret,
-        redirect_uri=settings.microsoft_redirect_uri,
-    )
-    tokens = await oauth.refresh_access_token(cipher.decrypt(account.encrypted_refresh_token))
-    account.encrypted_access_token = cipher.encrypt(tokens.access_token)
-    account.access_token_expires_at = tokens.expires_at
-    if tokens.refresh_token:
-        account.encrypted_refresh_token = cipher.encrypt(tokens.refresh_token)
-    return tokens.access_token
+    session: AsyncSession | None = None,
+) -> MicrosoftGraphClient:
+    session = session or async_object_session(account)
+    if session is None:
+        raise RuntimeError("Subscription renewal requires a persisted account session")
+    client = await provider_client(account, session, resources, settings)
+    if not isinstance(client, MicrosoftGraphClient):
+        raise ValueError("Graph subscription requires a Microsoft connection")
+    return client
 
 
 async def ensure_graph_subscription(
@@ -187,8 +174,7 @@ async def ensure_graph_subscription(
             resource=MICROSOFT_MESSAGES_RESOURCE,
             client_state=secrets.token_urlsafe(32)[:128],
         )
-    token = await access_token_for_account(account=account, resources=resources, settings=settings)
-    client = MicrosoftGraphClient(token)
+    client = await graph_client_for_account(account=account, resources=resources, settings=settings)
     requested_expiration = datetime.now(UTC) + timedelta(
         hours=settings.microsoft_graph_subscription_hours
     )
@@ -235,8 +221,8 @@ async def reauthorize_subscription(
 ) -> None:
     if not state.subscription_id:
         return
-    token = await access_token_for_account(account=account, resources=resources, settings=settings)
-    await MicrosoftGraphClient(token).reauthorize_subscription(state.subscription_id)
+    client = await graph_client_for_account(account=account, resources=resources, settings=settings)
+    await client.reauthorize_subscription(state.subscription_id)
     state.status = "active"
     state.last_error = None
 

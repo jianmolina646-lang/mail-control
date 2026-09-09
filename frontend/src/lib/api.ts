@@ -107,13 +107,13 @@ export async function api<T>(
 export async function apiBlob(path: string, canRefresh = true): Promise<Blob> {
   const token = sessionStorage.getItem(ACCESS_KEY);
   if (token) recordSessionActivity();
-  const headers = new Headers({ Accept: "image/*" });
+  const headers = new Headers({ Accept: "*/*" });
   if (token) headers.set("Authorization", `Bearer ${token}`);
   const response = await fetch(`${API_URL}${path}`, { headers, credentials: "include" });
   if (response.status === 401 && canRefresh && (await refreshSession())) {
     return apiBlob(path, false);
   }
-  if (!response.ok) throw new Error("No fue posible cargar la imagen.");
+  if (!response.ok) throw new Error("No fue posible descargar el archivo. Reintenta la descarga.");
   return response.blob();
 }
 

@@ -3,14 +3,18 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+import httpx
+
 from mail_control.modules.mail.microsoft import (
     MicrosoftDeltaExpired,
     MicrosoftGraphClient,
+    MicrosoftReauthorizationRequired,
     MicrosoftTransientError,
 )
 from mail_control.modules.mail.models import (
     AccountStatus,
     MailAccount,
+    MailProvider,
     MailSyncCursor,
     SyncKind,
     SyncRun,
@@ -32,9 +36,16 @@ def recipient_addresses(message: dict[str, Any]) -> list[str]:
 def microsoft_message_values(
     account: MailAccount,
     message: dict[str, Any],
+    folder_mailboxes: dict[str, str] | None = None,
 ) -> dict[str, object]:
     sender = message.get("from", {}).get("emailAddress", {})
     received = message.get("receivedDateTime")
+    folder_id = str(message.get("parentFolderId") or "")
+    mailbox = (folder_mailboxes or {}).get(folder_id, "other")
+    if message.get("isDraft"):
+        mailbox = "drafts"
+    is_read = bool(message.get("isRead", False))
+    is_starred = message.get("flag", {}).get("flagStatus") == "flagged"
     return {
         "tenant_id": account.tenant_id,
         "mail_account_id": account.id,
@@ -54,6 +65,13 @@ def microsoft_message_values(
         "label_ids": [message.get("parentFolderId", "")],
         "payload": message,
         "deleted_at": None,
+        "is_read": is_read,
+        "is_starred": is_starred,
+        "mailbox": mailbox,
+        "provider_is_read": is_read,
+        "provider_is_starred": is_starred,
+        "provider_mailbox": mailbox,
+        "provider_folder_id": folder_id or None,
     }
 
 
@@ -66,6 +84,8 @@ class MicrosoftSyncService:
         account: MailAccount,
         client: MicrosoftGraphClient,
     ) -> SyncRun:
+        if account.provider is not MailProvider.MICROSOFT:
+            raise ValueError("Microsoft synchronization requires a Microsoft account")
         run = SyncRun(
             tenant_id=account.tenant_id,
             mail_account_id=account.id,
@@ -74,11 +94,13 @@ class MicrosoftSyncService:
             started_at=datetime.now(UTC),
         )
         self.repository.add(run)
+        run.messages_seen = run.messages_created = run.messages_updated = 0
         previous_status = account.status
         account.status = AccountStatus.SYNCING
         await self.repository.flush()
         try:
             folders = await self._all_folders(client)
+            folder_mailboxes = await client.folder_mailboxes()
             had_cursor = False
             for folder in folders:
                 resource_key = f"folder:{folder['id']}"
@@ -88,7 +110,9 @@ class MicrosoftSyncService:
                     resource_key,
                 )
                 had_cursor = had_cursor or cursor is not None
-                await self._sync_folder(account, client, folder["id"], cursor, run)
+                await self._sync_folder(
+                    account, client, folder["id"], cursor, run, folder_mailboxes
+                )
             run.kind = SyncKind.INCREMENTAL if had_cursor else SyncKind.INITIAL
             run.status = SyncStatus.SUCCEEDED
             account.status = AccountStatus.CONNECTED
@@ -107,7 +131,11 @@ class MicrosoftSyncService:
         except Exception as error:
             run.status = SyncStatus.FAILED
             run.error = str(error)[:2000]
-            account.status = AccountStatus.ERROR
+            account.status = (
+                AccountStatus.REAUTH_REQUIRED
+                if isinstance(error, MicrosoftReauthorizationRequired)
+                else AccountStatus.ERROR
+            )
             account.last_error = run.error
             raise
         finally:
@@ -148,6 +176,7 @@ class MicrosoftSyncService:
         folder_id: str,
         cursor: MailSyncCursor | None,
         run: SyncRun,
+        folder_mailboxes: dict[str, str] | None = None,
     ) -> None:
         resource_key = f"folder:{folder_id}"
         next_link = cursor.cursor if cursor else None
@@ -157,25 +186,28 @@ class MicrosoftSyncService:
                 for message in page.get("value", []):
                     run.messages_seen += 1
                     if "@removed" in message:
-                        await self.repository.mark_deleted(
-                            account.id,
-                            message["id"],
-                            datetime.now(UTC),
-                        )
-                        run.messages_updated += 1
-                    else:
-                        created = await self.repository.upsert_message(
-                            microsoft_message_values(account, message)
-                        )
-                        await self.repository.queue_analysis(
-                            account.id,
-                            message["id"],
-                            account.tenant_id,
-                        )
-                        if created:
-                            run.messages_created += 1
-                        else:
+                        # A folder removal also represents a move. Resolve the
+                        # immutable ID account-wide before saving this cursor.
+                        try:
+                            message = await client.get_message(message["id"])
+                        except httpx.HTTPStatusError as error:
+                            if error.response.status_code != 404:
+                                raise
+                            await self.repository.mark_deleted(
+                                account.id, message["id"], datetime.now(UTC)
+                            )
                             run.messages_updated += 1
+                            continue
+                    created = await self.repository.upsert_message(
+                        microsoft_message_values(account, message, folder_mailboxes)
+                    )
+                    await self.repository.queue_analysis(
+                        account.id, message["id"], account.tenant_id
+                    )
+                    if created:
+                        run.messages_created += 1
+                    else:
+                        run.messages_updated += 1
                 next_link = page.get("@odata.nextLink")
                 delta_link = page.get("@odata.deltaLink")
                 if delta_link:
@@ -193,7 +225,11 @@ class MicrosoftSyncService:
                 if not next_link:
                     raise RuntimeError("Microsoft delta response omitted its continuation")
         except MicrosoftDeltaExpired:
+            if cursor is None:
+                raise
             if cursor is not None:
                 await self.repository.session.delete(cursor)
                 await self.repository.flush()
-            await self._sync_folder(account, client, folder_id, None, run)
+            await self._sync_folder(
+                account, client, folder_id, None, run, folder_mailboxes
+            )

@@ -6,15 +6,20 @@ import hashlib
 import json
 import random
 import secrets
+from collections.abc import Awaitable, Callable
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
 from typing import Any, cast
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode, urlparse
 from uuid import UUID
 
 import httpx
 from redis.asyncio import Redis
+from redis.exceptions import RedisError
+
+from mail_control.modules.mail.http import bounded_request
 
 MICROSOFT_AUTH_URL = "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"
 MICROSOFT_TOKEN_URL = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
@@ -47,6 +52,8 @@ class MicrosoftOAuthState:
     tenant_id: UUID
     user_id: UUID
     verifier: str
+    target_account_id: UUID | None = None
+    browser_nonce: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,7 +78,10 @@ class MicrosoftOAuth:
         self.client_secret = client_secret
         self.redirect_uri = redirect_uri
 
-    async def authorization_url(self, tenant_id: UUID, user_id: UUID) -> str:
+    async def authorization_url(
+        self, tenant_id: UUID, user_id: UUID, *, account_id: UUID | None = None,
+        email_hint: str | None = None, browser_nonce: str | None = None,
+    ) -> str:
         state = secrets.token_urlsafe(32)
         verifier = secrets.token_urlsafe(64)
         challenge = base64.urlsafe_b64encode(
@@ -85,6 +95,8 @@ class MicrosoftOAuth:
                     "tenant_id": str(tenant_id),
                     "user_id": str(user_id),
                     "verifier": verifier,
+                    "target_account_id": str(account_id) if account_id else None,
+                    "browser_nonce": browser_nonce,
                 }
             ),
         )
@@ -93,7 +105,9 @@ class MicrosoftOAuth:
             'response_type': 'code',
             'redirect_uri': self.redirect_uri,
             'response_mode': 'query',
+            'prompt': 'select_account',
             'scope': ' '.join(MICROSOFT_SCOPES),
+            **({'login_hint': email_hint} if email_hint else {}),
             'state': state,
             'code_challenge': challenge,
             'code_challenge_method': 'S256',
@@ -108,6 +122,12 @@ class MicrosoftOAuth:
             tenant_id=UUID(data["tenant_id"]),
             user_id=UUID(data["user_id"]),
             verifier=data["verifier"],
+            target_account_id=(
+                UUID(data["target_account_id"])
+                if data.get("target_account_id")
+                else None
+            ),
+            browser_nonce=data.get("browser_nonce"),
         )
 
     async def exchange_code(self, code: str, verifier: str) -> MicrosoftTokens:
@@ -164,7 +184,15 @@ class MicrosoftOAuth:
 
 
 class MicrosoftGraphClient:
-    def __init__(self, access_token: str) -> None:
+    def __init__(
+        self, access_token: str, *,
+        refresh_access_token: Callable[[str], Awaitable[str]] | None = None,
+        folder_cache: Redis | None = None,
+        folder_cache_key: str | None = None,
+    ) -> None:
+        self._refresh_access_token = refresh_access_token
+        self._folder_cache = folder_cache
+        self._folder_cache_key = folder_cache_key
         self.headers = {
             "Authorization": f"Bearer {access_token}",
             "Prefer": 'IdType="ImmutableId", odata.maxpagesize=100',
@@ -181,6 +209,56 @@ class MicrosoftGraphClient:
             params={"includeHiddenFolders": "true", "$top": 100},
         )
 
+    async def folder_mailboxes(self) -> dict[str, str]:
+        if self._folder_cache is not None and self._folder_cache_key:
+            try:
+                cached = await self._folder_cache.get(self._folder_cache_key)
+                if cached:
+                    data = json.loads(cached)
+                    if isinstance(data, dict) and all(
+                        isinstance(key, str) and isinstance(value, str)
+                        for key, value in data.items()
+                    ):
+                        return cast(dict[str, str], data)
+            except (RedisError, ValueError):
+                pass
+        result: dict[str, str] = {}
+        for name, mailbox in (
+            ("inbox", "inbox"), ("sentitems", "sent"), ("drafts", "drafts"),
+            ("deleteditems", "trash"), ("junkemail", "spam"), ("archive", "archive"),
+        ):
+            try:
+                folder = await self.get(f"/me/mailFolders/{name}", params={"$select": "id"})
+            except httpx.HTTPStatusError as error:
+                if error.response.status_code == 404:
+                    continue
+                raise
+            result[str(folder["id"])] = mailbox
+        if self._folder_cache is not None and self._folder_cache_key:
+            with suppress(RedisError):
+                await self._folder_cache.setex(self._folder_cache_key, 3600, json.dumps(result))
+        return result
+
+    async def get_message(self, message_id: str) -> dict[str, Any]:
+        return await self.get(f"/me/messages/{quote(message_id, safe='')}")
+
+    async def attachments(self, message_id: str, page_url: str | None = None) -> dict[str, Any]:
+        return await self.get(
+            page_url or f"/me/messages/{quote(message_id, safe='')}/attachments",
+            params=None if page_url else {
+                "$select": (
+                    "id,name,contentType,size,isInline,"
+                    "microsoft.graph.fileAttachment/contentId"
+                ),
+                "$top": 100,
+            },
+        )
+
+    async def attachment(self, message_id: str, attachment_id: str) -> dict[str, Any]:
+        return await self.get(
+            f"/me/messages/{quote(message_id, safe='')}/attachments/{quote(attachment_id, safe='')}"
+        )
+
     async def delta(self, folder_id: str, cursor: str | None = None) -> dict[str, Any]:
         url = cursor or f"/me/mailFolders/{folder_id}/messages/delta"
         params: dict[str, str | int] | None = None
@@ -189,7 +267,7 @@ class MicrosoftGraphClient:
                 "$select": (
                     "id,conversationId,internetMessageId,subject,from,toRecipients,"
                     "ccRecipients,bccRecipients,receivedDateTime,bodyPreview,isRead,"
-                    "body,parentFolderId,hasAttachments"
+                    "body,parentFolderId,hasAttachments,flag,isDraft"
                 )
             }
         try:
@@ -211,7 +289,7 @@ class MicrosoftGraphClient:
         return await self.post(
             "/subscriptions",
             json_data={
-                "changeType": "created",
+                "changeType": "created,updated,deleted",
                 "notificationUrl": notification_url,
                 "lifecycleNotificationUrl": lifecycle_url,
                 "resource": resource,
@@ -268,7 +346,11 @@ class MicrosoftGraphClient:
         params: dict[str, str | int] | None = None,
         json_data: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        parsed = urlparse(path_or_url)
+        if parsed.netloc and (parsed.scheme != "https" or parsed.netloc != "graph.microsoft.com"):
+            raise MicrosoftError("Refusing a Graph continuation outside the provider origin")
         last_error: Exception | None = None
+        refreshed = False
         async with httpx.AsyncClient(
             base_url=GRAPH_URL,
             headers=self.headers,
@@ -276,15 +358,30 @@ class MicrosoftGraphClient:
         ) as client:
             for attempt in range(GRAPH_MAX_ATTEMPTS):
                 try:
-                    response = await client.request(
-                        method,
+                    response = await bounded_request(
+                        client, method,
                         path_or_url,
                         params=params,
                         json=json_data,
+                        headers=self.headers,
                     )
                 except httpx.RequestError as error:
                     last_error = error
                 else:
+                    if response.status_code == 401 and self._refresh_access_token and not refreshed:
+                        token = await self._refresh_access_token(
+                            self.headers["Authorization"].removeprefix("Bearer ")
+                        )
+                        self.headers["Authorization"] = f"Bearer {token}"
+                        refreshed = True
+                        response = await bounded_request(
+                            client,
+                            method,
+                            path_or_url,
+                            params=params,
+                            json=json_data,
+                            headers=self.headers,
+                        )
                     if response.status_code not in GRAPH_TRANSIENT_STATUS_CODES:
                         response.raise_for_status()
                         if not response.content:
@@ -301,7 +398,12 @@ class MicrosoftGraphClient:
                 retry_after = None
                 if isinstance(last_error, httpx.HTTPStatusError):
                     retry_after = last_error.response.headers.get("Retry-After")
-                await asyncio.sleep(self._retry_delay(retry_after, attempt))
+                delay = self._retry_delay(retry_after, attempt)
+                if delay > GRAPH_MAX_RETRY_DELAY_SECONDS:
+                    raise MicrosoftTransientError(
+                        "Microsoft Graph requested a longer retry cooldown"
+                    ) from last_error
+                await asyncio.sleep(delay)
 
         raise MicrosoftTransientError(
             f"Microsoft Graph remained unavailable after {GRAPH_MAX_ATTEMPTS} attempts"

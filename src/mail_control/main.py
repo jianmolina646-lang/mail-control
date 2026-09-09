@@ -12,6 +12,7 @@ from mail_control.api.gmail import router as gmail_router
 from mail_control.api.gmail_push import router as gmail_push_router
 from mail_control.api.health import router as health_router
 from mail_control.api.identity import router as identity_router
+from mail_control.api.mail_health import router as mail_health_router
 from mail_control.api.microsoft import router as microsoft_router
 from mail_control.api.microsoft_graph import router as microsoft_graph_router
 from mail_control.api.platform import router as platform_router
@@ -56,6 +57,7 @@ def create_app() -> FastAPI:
     app.include_router(microsoft_router)
     app.include_router(microsoft_graph_router)
     app.include_router(dashboard_router)
+    app.include_router(mail_health_router)
     app.include_router(saas_router)
     app.include_router(platform_router)
     return app

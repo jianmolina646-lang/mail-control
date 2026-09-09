@@ -11,8 +11,14 @@ from mail_control.modules.mail.microsoft import (
     MicrosoftError,
     MicrosoftOAuth,
 )
-from mail_control.modules.mail.microsoft_sync import microsoft_message_values
-from mail_control.modules.mail.models import MailAccount, MailProvider
+from mail_control.modules.mail.microsoft_sync import MicrosoftSyncService, microsoft_message_values
+from mail_control.modules.mail.models import (
+    MailAccount,
+    MailProvider,
+    SyncKind,
+    SyncRun,
+    SyncStatus,
+)
 
 
 class FakeRedis:
@@ -88,3 +94,59 @@ def test_graph_message_mapping_preserves_payload() -> None:
     assert values["sender"] == "billing@microsoft.com"
     assert values["recipients"] == ["owner@outlook.com"]
     assert values["payload"] == graph_message()
+
+
+@pytest.mark.asyncio
+async def test_folder_removal_that_is_a_move_does_not_tombstone_the_message() -> None:
+    class Repository:
+        def __init__(self) -> None:
+            self.deleted: list[str] = []
+            self.upserts: list[dict[str, object]] = []
+
+        def add(self, value: object) -> None:
+            return None
+
+        async def mark_deleted(self, account_id, message_id, deleted_at) -> None:
+            self.deleted.append(message_id)
+
+        async def upsert_message(self, values: dict[str, object]) -> bool:
+            self.upserts.append(values)
+            return False
+
+        async def queue_analysis(self, account_id, message_id, tenant_id) -> None:
+            return None
+
+    class Client:
+        async def delta(self, folder_id: str, cursor: str | None) -> dict[str, Any]:
+            assert folder_id == "inbox-id" and cursor is None
+            return {
+                "value": [{"id": "immutable-message-id", "@removed": {"reason": "changed"}}],
+                "@odata.deltaLink": "https://graph.microsoft.com/v1.0/delta-token",
+            }
+
+        async def get_message(self, message_id: str) -> dict[str, Any]:
+            assert message_id == "immutable-message-id"
+            moved = graph_message()
+            moved["parentFolderId"] = "archive-id"
+            return moved
+
+    account = MailAccount(
+        id=uuid4(), tenant_id=uuid4(), connected_by_user_id=uuid4(),
+        provider=MailProvider.MICROSOFT, provider_account_id="graph-user-id",
+        email="owner@outlook.com", encrypted_refresh_token="encrypted",
+    )
+    run = SyncRun(
+        tenant_id=account.tenant_id, mail_account_id=account.id,
+        kind=SyncKind.INCREMENTAL, status=SyncStatus.RUNNING,
+    )
+    run.messages_seen = run.messages_created = run.messages_updated = 0
+    repository = Repository()
+
+    await MicrosoftSyncService(repository)._sync_folder(  # type: ignore[arg-type]
+        account, Client(), "inbox-id", None, run,
+        {"inbox-id": "inbox", "archive-id": "archive"},
+    )
+
+    assert repository.deleted == []
+    assert repository.upserts[0]["provider_mailbox"] == "archive"
+    assert run.messages_updated == 1

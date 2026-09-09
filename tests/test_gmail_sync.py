@@ -14,6 +14,9 @@ from tests.test_gmail import gmail_message
 
 
 class MissingMessageClient:
+    async def profile(self) -> dict[str, Any]:
+        return {"historyId": "initial-history"}
+
     async def list_messages(self, *, page_token: str | None = None) -> dict[str, Any]:
         return {"messages": [{"id": "deleted-message"}]}
 
@@ -44,6 +47,33 @@ class FakeRepository:
         tenant_id: object,
     ) -> None:
         raise AssertionError("a deleted Gmail message must not be analyzed")
+
+
+class RecordingRepository(FakeRepository):
+    def __init__(self) -> None:
+        super().__init__()
+        self.messages: list[dict[str, object]] = []
+        self.deleted: list[str] = []
+
+    async def upsert_message(self, values: dict[str, object]) -> bool:
+        self.messages.append(values)
+        return True
+
+    async def queue_analysis(
+        self,
+        account_id: object,
+        message_id: str,
+        tenant_id: object,
+    ) -> None:
+        return None
+
+    async def mark_deleted(
+        self,
+        account_id: object,
+        message_id: str,
+        deleted_at: object,
+    ) -> None:
+        self.deleted.append(message_id)
 
 
 def account() -> MailAccount:
@@ -122,3 +152,54 @@ async def test_full_sync_skips_message_deleted_after_listing() -> None:
             "sync_kind": "initial",
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_empty_full_sync_still_saves_a_replayable_history_checkpoint() -> None:
+    class EmptyMailbox:
+        async def profile(self) -> dict[str, Any]:
+            return {"historyId": "baseline"}
+
+        async def list_messages(self, *, page_token: str | None = None) -> dict[str, Any]:
+            return {"messages": []}
+
+    repository = RecordingRepository()
+    mail_account = account()
+
+    await GmailSyncService(repository).synchronize(  # type: ignore[arg-type]
+        mail_account, EmptyMailbox()  # type: ignore[arg-type]
+    )
+
+    assert mail_account.history_cursor == "baseline"
+
+
+@pytest.mark.asyncio
+async def test_incremental_cursor_is_not_advanced_when_a_later_history_page_fails() -> None:
+    class LaterPageFails:
+        async def history(
+            self, start_history_id: str, *, page_token: str | None = None
+        ) -> dict[str, Any]:
+            assert start_history_id == "checkpoint"
+            if page_token is None:
+                return {
+                    "history": [{"labelsAdded": [{"message": {"id": "first"}}]}],
+                    "nextPageToken": "second-page",
+                }
+            raise RuntimeError("simulated later page failure")
+
+        async def get_message(self, message_id: str, *, full: bool = True) -> dict[str, Any]:
+            message = gmail_message()
+            message["id"] = message_id
+            return message
+
+    repository = RecordingRepository()
+    mail_account = account()
+    mail_account.history_cursor = "checkpoint"
+
+    with pytest.raises(RuntimeError, match="later page"):
+        await GmailSyncService(repository).synchronize(  # type: ignore[arg-type]
+            mail_account, LaterPageFails()  # type: ignore[arg-type]
+        )
+
+    assert mail_account.history_cursor == "checkpoint"
+    assert [item["provider_message_id"] for item in repository.messages] == ["first"]

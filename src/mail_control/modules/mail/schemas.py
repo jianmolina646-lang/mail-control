@@ -12,6 +12,10 @@ class AuthorizationUrlResponse(BaseModel):
     authorization_url: str
 
 
+class AuthorizationRequest(BaseModel):
+    account_id: UUID | None = None
+
+
 class MailAccountResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

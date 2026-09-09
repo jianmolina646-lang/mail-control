@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import base64
+from email.message import Message
+from email.utils import formataddr, getaddresses
 from html.parser import HTMLParser
 from typing import Any
 
@@ -37,9 +39,46 @@ def html_to_text(value: str) -> str:
     return parser.text()
 
 
-def _decode_gmail_data(data: str) -> str:
+MAX_BODY_BYTES = 2 * 1024 * 1024
+
+
+def _decode_gmail_data(data: str, charset: str = "utf-8") -> str:
+    if len(data) > (MAX_BODY_BYTES * 4 // 3) + 8:
+        raise ValueError("message body exceeds the 2 MiB limit")
     padding = "=" * (-len(data) % 4)
-    return base64.urlsafe_b64decode(data + padding).decode("utf-8", errors="replace").strip()
+    decoded = base64.urlsafe_b64decode(data + padding)
+    try:
+        return decoded.decode(charset, errors="replace").strip()
+    except LookupError:
+        return decoded.decode("utf-8", errors="replace").strip()
+
+
+def part_headers(part: dict[str, Any]) -> dict[str, str]:
+    return {str(header.get("name", "")).casefold(): str(header.get("value", ""))
+            for header in part.get("headers", []) if isinstance(header, dict)}
+
+
+def message_recipients(payload: dict[str, Any], provider: MailProvider) -> tuple[
+    list[str], list[str]
+]:
+    if provider == MailProvider.GMAIL:
+        headers = payload.get("payload", {}).get("headers", [])
+        def gmail_values(name: str) -> list[str]:
+            values = [str(header.get("value", "")) for header in headers
+                      if isinstance(header, dict)
+                      and str(header.get("name", "")).casefold() == name]
+            return [formataddr((display, address)) for display, address in getaddresses(values)
+                    if address]
+        return gmail_values("to"), gmail_values("cc")
+
+    def graph_values(name: str) -> list[str]:
+        result = []
+        for recipient in payload.get(name, []):
+            address = recipient.get("emailAddress", {})
+            if address.get("address"):
+                result.append(formataddr((address.get("name") or "", address["address"])))
+        return result
+    return graph_values("toRecipients"), graph_values("ccRecipients")
 
 
 def _gmail_part(
@@ -47,7 +86,10 @@ def _gmail_part(
     mime_type: str,
     *,
     preserve_html: bool = False,
+    depth: int = 0,
 ) -> str | None:
+    if depth > 30:
+        return None
     filename = payload.get("filename")
     headers = payload.get("headers")
     disposition = ""
@@ -63,7 +105,9 @@ def _gmail_part(
     if payload.get("mimeType") == mime_type:
         body = payload.get("body")
         if isinstance(body, dict) and isinstance(body.get("data"), str):
-            decoded = _decode_gmail_data(body["data"])
+            mime_header = Message()
+            mime_header["content-type"] = part_headers(payload).get("content-type", mime_type)
+            decoded = _decode_gmail_data(body["data"], mime_header.get_content_charset() or "utf-8")
             if mime_type == "text/html" and not preserve_html:
                 return html_to_text(decoded)
             return decoded
@@ -71,7 +115,7 @@ def _gmail_part(
     if isinstance(parts, list):
         for part in parts:
             if isinstance(part, dict):
-                result = _gmail_part(part, mime_type, preserve_html=preserve_html)
+                result = _gmail_part(part, mime_type, preserve_html=preserve_html, depth=depth + 1)
                 if result:
                     return result
     return None

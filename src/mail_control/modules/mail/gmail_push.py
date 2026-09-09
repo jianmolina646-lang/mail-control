@@ -10,10 +10,9 @@ import httpx
 import structlog
 from redis.exceptions import RedisError
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_object_session
 
 from mail_control.infrastructure.resources import Resources
-from mail_control.modules.mail.crypto import CredentialCipher
 from mail_control.modules.mail.gmail import GmailClient, GmailError, GmailReauthRequired
 from mail_control.modules.mail.models import (
     AccountStatus,
@@ -21,9 +20,10 @@ from mail_control.modules.mail.models import (
     MailAccount,
     MailProvider,
 )
+from mail_control.modules.mail.token_manager import provider_client
 from mail_control.modules.system.telegram_alerts import TelegramAlerts
 from mail_control.settings import Settings
-from mail_control.worker import access_token, mark_reauth_required
+from mail_control.worker import mark_reauth_required
 
 logger = structlog.get_logger(__name__)
 
@@ -115,33 +115,38 @@ async def enqueue_from_push(
     email: str,
     history_id: str,
 ) -> bool:
-    account = await session.scalar(
+    accounts = (await session.scalars(
         select(MailAccount).where(
             MailAccount.provider == MailProvider.GMAIL,
             MailAccount.provider_account_id == email.casefold(),
-            MailAccount.status.in_((AccountStatus.CONNECTED, AccountStatus.ERROR)),
+            MailAccount.status.in_(
+                (AccountStatus.CONNECTED, AccountStatus.ERROR, AccountStatus.SYNCING)
+            ),
         )
-    )
-    if account is None:
-        logger.warning("gmail_push_account_not_found", email=email)
+    )).all()
+    if not accounts:
+        logger.warning("gmail_push_account_not_found")
         return False
-    dedupe_key = f"mail-control:gmail-push:{account.id}:{history_id}"
-    try:
-        claimed = await resources.redis.set(
-            dedupe_key,
-            "1",
-            ex=settings.gmail_push_dedupe_seconds,
-            nx=True,
-        )
-    except RedisError:
-        logger.warning("gmail_push_dedupe_unavailable", account_id=str(account.id))
-        claimed = True
-    if not claimed:
-        logger.info("gmail_push_duplicate", account_id=str(account.id), history_id=history_id)
-        return False
-    await enqueue_gmail_sync(resources, tenant_id=account.tenant_id, account_id=account.id)
-    logger.info("gmail_push_sync_enqueued", account_id=str(account.id), history_id=history_id)
-    return True
+    queued = False
+    for account in accounts:
+        dedupe_key = f"mail-control:gmail-push:{account.id}:{history_id}"
+        try:
+            claimed = await resources.redis.set(
+                dedupe_key, "1", ex=settings.gmail_push_dedupe_seconds, nx=True,
+            )
+        except RedisError:
+            logger.warning("gmail_push_dedupe_unavailable", account_id=str(account.id))
+            claimed = True
+        if not claimed:
+            continue
+        try:
+            await enqueue_gmail_sync(resources, tenant_id=account.tenant_id, account_id=account.id)
+        except Exception:
+            await resources.redis.delete(dedupe_key)
+            raise
+        logger.info("gmail_push_sync_enqueued", account_id=str(account.id), history_id=history_id)
+        queued = True
+    return queued
 
 
 def watch_expiration(value: Any) -> datetime | None:
@@ -159,22 +164,17 @@ async def renew_gmail_watch(
     state: GmailWatchState | None,
     resources: Resources,
     settings: Settings,
+    session: AsyncSession | None = None,
 ) -> GmailWatchState:
     if not settings.gmail_pubsub_topic:
         raise GmailError("Gmail Pub/Sub topic is not configured")
-    cipher = CredentialCipher(settings.credential_encryption_key or settings.app_secret_key)
-    token, expires_at, rotated_refresh_token = await access_token(
-        settings,
-        resources,
-        account.encrypted_access_token,
-        account.access_token_expires_at,
-        account.encrypted_refresh_token,
-    )
-    account.encrypted_access_token = cipher.encrypt(token)
-    account.access_token_expires_at = expires_at
-    if rotated_refresh_token:
-        account.encrypted_refresh_token = cipher.encrypt(rotated_refresh_token)
-    response = await GmailClient(token).watch(
+    session = session or async_object_session(account)
+    if session is None:
+        raise RuntimeError("Watch renewal requires a persisted account session")
+    client = await provider_client(account, session, resources, settings)
+    if not isinstance(client, GmailClient):
+        raise ValueError("Gmail watch requires a Gmail connection")
+    response = await client.watch(
         topic_name=settings.gmail_pubsub_topic,
         label_ids=settings.gmail_watch_label_ids,
     )
@@ -230,6 +230,7 @@ async def renew_due_gmail_watches(resources: Resources, settings: Settings) -> i
                     state=state,
                     resources=resources,
                     settings=settings,
+                    session=session,
                 )
                 session.add(state)
                 await alerts.account_recovered(account)

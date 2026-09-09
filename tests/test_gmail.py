@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 
 import pytest
@@ -44,7 +45,8 @@ async def test_oauth_url_uses_offline_consent_pkce_and_one_time_state() -> None:
     url = await oauth.authorization_url(tenant_id, user_id)
 
     assert "access_type=offline" in url
-    assert "prompt=consent" in url
+    prompt = parse_qs(urlsplit(url).query)["prompt"][0]
+    assert {"consent", "select_account"} <= set(prompt.split())
     assert "code_challenge_method=S256" in url
     assert GMAIL_SCOPE.replace(":", "%3A").replace("/", "%2F") in url
 

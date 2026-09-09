@@ -11,7 +11,7 @@ RUN addgroup --system app && adduser --system --ingroup app app
 
 COPY pyproject.toml README.md ./
 COPY src ./src
-RUN --mount=type=cache,target=/root/.cache/pip pip install "."
+RUN pip install --no-cache-dir "."
 RUN python -m pip install --no-cache-dir --upgrade "setuptools>=78.1.1" "msgpack>=1.2.1"
 
 COPY alembic.ini ./

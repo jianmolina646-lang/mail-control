@@ -26,6 +26,7 @@ class MailAccountService:
         account = await self.repository.account_by_provider_id(
             tenant_id,
             provider_account_id,
+            MailProvider.GMAIL,
         )
         encrypted_refresh_token = (
             self.cipher.encrypt(tokens.refresh_token) if tokens.refresh_token else None
@@ -74,6 +75,7 @@ class MailAccountService:
         account = await self.repository.account_by_provider_id(
             tenant_id,
             provider_account_id,
+            MailProvider.MICROSOFT,
         )
         encrypted_refresh_token = (
             self.cipher.encrypt(tokens.refresh_token) if tokens.refresh_token else None
