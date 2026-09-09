@@ -16,6 +16,7 @@ docker compose exec -T rabbitmq rabbitmqctl \
 
 sed -i \
   -e "s|^DATABASE_URL=.*|DATABASE_URL=postgresql+asyncpg://mail_control:$db_password@postgres:5432/mail_control|" \
+  -e "s|^MIGRATION_DATABASE_URL=.*|MIGRATION_DATABASE_URL=postgresql+asyncpg://mail_control:$db_password@postgres:5432/mail_control|" \
   -e "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=$db_password|" \
   -e "s|^RABBITMQ_URL=.*|RABBITMQ_URL=amqp://mail_control:$rabbitmq_password@rabbitmq:5672/|" \
   -e "s|^RABBITMQ_DEFAULT_PASS=.*|RABBITMQ_DEFAULT_PASS=$rabbitmq_password|" \
@@ -24,6 +25,10 @@ sed -i \
 
 if ! grep -q '^WEB_PORT=' .env; then
   printf '\nWEB_PORT=8081\n' >> .env
+fi
+
+if ! grep -q '^MIGRATION_DATABASE_URL=' .env; then
+  printf '\nMIGRATION_DATABASE_URL=postgresql+asyncpg://mail_control:%s@postgres:5432/mail_control\n' "$db_password" >> .env
 fi
 
 chmod 600 .env

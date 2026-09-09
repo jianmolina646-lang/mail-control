@@ -18,6 +18,7 @@ cat > .env <<EOF
 APP_ENV=production
 APP_SECRET_KEY=$app_secret
 DATABASE_URL=postgresql+asyncpg://mail_control:$db_password@postgres:5432/mail_control
+MIGRATION_DATABASE_URL=postgresql+asyncpg://mail_control:$db_password@postgres:5432/mail_control
 REDIS_URL=redis://redis:6379/0
 RABBITMQ_URL=amqp://mail_control:$rabbitmq_password@rabbitmq:5672/
 ALLOWED_ORIGINS=http://127.0.0.1:8180
