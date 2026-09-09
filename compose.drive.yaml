@@ -1,0 +1,30 @@
+name: mail-control-enterprise
+services:
+  drive-backup:
+    build: ./backup-drive
+    restart: unless-stopped
+    env_file: .env.drive
+    environment:
+      RCLONE_CONFIG: /config/rclone.conf
+      DRIVE_REMOTE: mailcontrol_drive:MailControlBackups/Enterprise/Daily
+      DRIVE_KEEP_COPIES: "30"
+    volumes:
+      - drive_source:/backups:ro
+      - ./secrets/drive:/config
+      - drive_state:/state
+    healthcheck:
+      test: ["CMD", "python3", "/app/mirror.py", "--health"]
+      interval: 5m
+      timeout: 10s
+      retries: 2
+      start_period: 15m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+volumes:
+  drive_source:
+    external: true
+    name: mail-control-enterprise_enterprise_backup_data
+  drive_state:
