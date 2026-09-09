@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 from contextlib import suppress
-from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 import structlog
@@ -12,16 +11,15 @@ from redis.exceptions import LockError
 
 from mail_control.infrastructure.database.tenant import set_tenant_context
 from mail_control.infrastructure.resources import Resources
-from mail_control.modules.mail.crypto import CredentialCipher
 from mail_control.modules.mail.gmail import (
     GmailClient,
     GmailError,
-    GmailOAuth,
     GmailReauthRequired,
 )
-from mail_control.modules.mail.models import AccountStatus, MailAccount
+from mail_control.modules.mail.models import AccountStatus, MailAccount, MailProvider
 from mail_control.modules.mail.repository import MailRepository
 from mail_control.modules.mail.sync import GmailSyncService
+from mail_control.modules.mail.token_manager import AccountUnavailableError, provider_client
 from mail_control.modules.system.telegram_alerts import TelegramAlerts
 from mail_control.settings import Settings, get_settings
 
@@ -39,28 +37,6 @@ def mark_reauth_required(
     account.access_token_expires_at = None
 
 
-async def access_token(
-    settings: Settings,
-    resources: Resources,
-    account_token: str | None,
-    expires_at: datetime | None,
-    refresh_token: str,
-) -> tuple[str, datetime, str | None]:
-    cipher = CredentialCipher(settings.credential_encryption_key or settings.app_secret_key)
-    if account_token and expires_at and expires_at > datetime.now(UTC) + timedelta(minutes=2):
-        return cipher.decrypt(account_token), expires_at, None
-    if not settings.google_client_id or not settings.google_client_secret:
-        raise RuntimeError("Gmail OAuth is not configured")
-    oauth = GmailOAuth(
-        resources.redis,
-        client_id=settings.google_client_id,
-        client_secret=settings.google_client_secret,
-        redirect_uri=settings.google_redirect_uri,
-    )
-    tokens = await oauth.refresh_access_token(cipher.decrypt(refresh_token))
-    return tokens.access_token, tokens.expires_at, tokens.refresh_token
-
-
 async def process_message(
     message: AbstractIncomingMessage,
     resources: Resources,
@@ -75,17 +51,17 @@ async def process_message(
         async for session in resources.database.session():
             await set_tenant_context(session, tenant_id)
             repository = MailRepository(session)
-            account = await repository.account_by_id(tenant_id, account_id)
-            if account is None or account.status is AccountStatus.DISCONNECTED:
+            account = await repository.account_by_id(tenant_id, account_id, MailProvider.GMAIL)
+            if (
+                account is None or account.provider is not MailProvider.GMAIL
+                or account.status in {AccountStatus.DISCONNECTED, AccountStatus.REAUTH_REQUIRED}
+            ):
                 return
             try:
-                token, expires_at, rotated_refresh_token = await access_token(
-                    settings,
-                    resources,
-                    account.encrypted_access_token,
-                    account.access_token_expires_at,
-                    account.encrypted_refresh_token,
-                )
+                client = await provider_client(account, session, resources, settings)
+                assert isinstance(client, GmailClient)
+            except AccountUnavailableError:
+                return
             except GmailReauthRequired as error:
                 mark_reauth_required(account, str(error))
                 await repository.commit()
@@ -104,16 +80,15 @@ async def process_message(
                     str(error),
                 )
                 raise
-            cipher = CredentialCipher(
-                settings.credential_encryption_key or settings.app_secret_key
-            )
-            account.encrypted_access_token = cipher.encrypt(token)
-            account.access_token_expires_at = expires_at
-            if rotated_refresh_token:
-                account.encrypted_refresh_token = cipher.encrypt(rotated_refresh_token)
             alerts = TelegramAlerts(settings, resources.redis)
             try:
-                await GmailSyncService(repository).synchronize(account, GmailClient(token))
+                await GmailSyncService(repository).synchronize(account, client)
+            except GmailReauthRequired as error:
+                await set_tenant_context(session, tenant_id)
+                mark_reauth_required(account, str(error))
+                await repository.commit()
+                await alerts.account_issue(account, str(error))
+                return
             except Exception as error:
                 await alerts.account_issue(account, str(error))
                 raise

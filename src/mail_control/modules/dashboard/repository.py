@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from mail_control.modules.analysis.models import Alert, AnalysisIncident, EmailAnalysis, RiskLevel
 from mail_control.modules.dashboard.cursor import decode_cursor, encode_cursor
+from mail_control.modules.dashboard.filters import MessageFilters, category_key
 from mail_control.modules.dashboard.schemas import (
     AccountItem,
     AlertItem,
@@ -16,6 +17,7 @@ from mail_control.modules.dashboard.schemas import (
     AnalysisPage,
     DailyMetric,
     DashboardSummary,
+    MessageCounts,
     MessageItem,
     MessagePage,
 )
@@ -23,7 +25,6 @@ from mail_control.modules.mail.models import (
     AccountStatus,
     EmailMessage,
     MailAccount,
-    MailProvider,
 )
 
 
@@ -37,8 +38,11 @@ class DashboardRepository:
             select(
                 EmailMessage.mail_account_id.label("account_id"),
                 func.count(EmailMessage.id).label("message_count"),
+                func.count(EmailMessage.id).filter(EmailMessage.is_read.is_(False)).label(
+                    "unread_count"
+                ),
             )
-            .where(EmailMessage.tenant_id == self.tenant_id)
+            .where(EmailMessage.tenant_id == self.tenant_id, EmailMessage.deleted_at.is_(None))
             .group_by(EmailMessage.mail_account_id)
             .subquery()
         )
@@ -50,6 +54,8 @@ class DashboardRepository:
             .join(Alert, Alert.email_message_id == EmailMessage.id)
             .where(
                 EmailMessage.tenant_id == self.tenant_id,
+                EmailMessage.deleted_at.is_(None),
+                Alert.tenant_id == self.tenant_id,
                 Alert.resolved_at.is_(None),
             )
             .group_by(EmailMessage.mail_account_id)
@@ -66,6 +72,7 @@ class DashboardRepository:
                     MailAccount.last_error,
                     func.coalesce(message_counts.c.message_count, 0),
                     func.coalesce(alert_counts.c.alert_count, 0),
+                    func.coalesce(message_counts.c.unread_count, 0),
                 )
                 .outerjoin(message_counts, message_counts.c.account_id == MailAccount.id)
                 .outerjoin(alert_counts, alert_counts.c.account_id == MailAccount.id)
@@ -73,6 +80,14 @@ class DashboardRepository:
                 .order_by(MailAccount.email)
             )
         ).all()
+        folder_rows = (await self.session.execute(
+            select(EmailMessage.mail_account_id, EmailMessage.mailbox, func.count())
+            .where(EmailMessage.tenant_id == self.tenant_id, EmailMessage.deleted_at.is_(None))
+            .group_by(EmailMessage.mail_account_id, EmailMessage.mailbox)
+        )).all()
+        folders: dict[UUID, dict[str, int]] = {}
+        for account_id, mailbox, count in folder_rows:
+            folders.setdefault(account_id, {})[mailbox] = count
         return [
             AccountItem(
                 id=row[0],
@@ -83,6 +98,8 @@ class DashboardRepository:
                 last_error=row[5],
                 message_count=row[6],
                 alert_count=row[7],
+                unread_count=row[8],
+                folder_counts=folders.get(row[0], {}),
             )
             for row in rows
         ]
@@ -92,13 +109,17 @@ class DashboardRepository:
         *,
         search: str | None,
         account_id: UUID | None,
-        provider: MailProvider | None,
+        provider: str | None,
         category: str | None,
-        risk_level: RiskLevel | None,
+        risk_level: str | None,
         mailbox: str,
         cursor: str | None,
         limit: int,
+        filters: MessageFilters | None = None,
     ) -> MessagePage:
+        filters = filters or MessageFilters(search=search, account_id=account_id,
+                                            provider=provider, category=category,
+                                            risk_level=risk_level)
         sort_time = func.coalesce(EmailMessage.received_at, EmailMessage.created_at)
         alert_counts = (
             select(
@@ -133,25 +154,18 @@ class DashboardRepository:
             .outerjoin(alert_counts, alert_counts.c.message_id == EmailMessage.id)
             .where(
                 EmailMessage.tenant_id == self.tenant_id,
+                MailAccount.tenant_id == self.tenant_id,
                 EmailMessage.deleted_at.is_(None),
-                EmailMessage.mailbox == mailbox,
+                *filters.conditions(),
             )
         )
-        if search:
-            statement = statement.where(
-                text(
-                    "email_messages.search_vector "
-                    "@@ websearch_to_tsquery('simple', :search)"
-                ).bindparams(search=search)
-            )
-        if account_id:
-            statement = statement.where(EmailMessage.mail_account_id == account_id)
-        if provider:
-            statement = statement.where(MailAccount.provider == provider)
-        if category:
-            statement = statement.where(EmailAnalysis.category == category)
-        if risk_level:
-            statement = statement.where(EmailAnalysis.risk_level == risk_level)
+        if mailbox != "all":
+            statement = statement.where(EmailMessage.mailbox == mailbox)
+        # Count the complete filtered relation before applying a pagination cursor.
+        filtered = statement.subquery()
+        totals = (await self.session.execute(select(
+            func.count(), func.count().filter(filtered.c.is_read.is_(False)),
+        ).select_from(filtered))).one()
         if cursor:
             timestamp, message_id = decode_cursor(cursor)
             statement = statement.where(
@@ -192,7 +206,41 @@ class DashboardRepository:
         next_cursor = (
             encode_cursor(visible[-1][15], visible[-1][0]) if has_more and visible else None
         )
-        return MessagePage(items=items, next_cursor=next_cursor)
+        return MessagePage(items=items, next_cursor=next_cursor,
+                           total_count=totals[0], unread_count=totals[1])
+
+    async def message_counts(self, filters: MessageFilters) -> MessageCounts:
+        rows = (await self.session.execute(
+            select(EmailMessage.mailbox, EmailMessage.is_read, EmailMessage.is_starred,
+                   EmailAnalysis.category, EmailAnalysis.risk_level, func.count())
+            .join(MailAccount, MailAccount.id == EmailMessage.mail_account_id)
+            .outerjoin(EmailAnalysis, and_(
+                EmailAnalysis.email_message_id == EmailMessage.id,
+                EmailAnalysis.tenant_id == self.tenant_id,
+            ))
+            .where(EmailMessage.tenant_id == self.tenant_id,
+                   MailAccount.tenant_id == self.tenant_id,
+                   EmailMessage.deleted_at.is_(None), *filters.conditions())
+            .group_by(EmailMessage.mailbox, EmailMessage.is_read, EmailMessage.is_starred,
+                      EmailAnalysis.category, EmailAnalysis.risk_level)
+        )).all()
+        result = MessageCounts()
+        for mailbox, is_read, is_starred, category, risk, count in rows:
+            result.total += count
+            result.folder_counts[mailbox] = result.folder_counts.get(mailbox, 0) + count
+            # Semantic navigation categories refer to the active inbox.
+            if mailbox != "inbox":
+                continue
+            result.unread += count if not is_read else 0
+            result.starred += count if is_starred else 0
+            result.critical += count if risk in {RiskLevel.HIGH, RiskLevel.CRITICAL} else 0
+            result.unanalyzed += count if category is None else 0
+            if category is not None:
+                key = category_key(category)
+                result.categories[key] = result.categories.get(key, 0) + count
+        result.archive = result.folder_counts.get("archive", 0)
+        result.trash = result.folder_counts.get("trash", 0)
+        return result
 
     async def alerts(
         self,

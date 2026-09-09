@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 from contextlib import suppress
-from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 import structlog
@@ -12,17 +11,16 @@ from redis.exceptions import LockError
 
 from mail_control.infrastructure.database.tenant import set_tenant_context
 from mail_control.infrastructure.resources import Resources
-from mail_control.modules.mail.crypto import CredentialCipher
 from mail_control.modules.mail.microsoft import (
     MicrosoftError,
     MicrosoftGraphClient,
-    MicrosoftOAuth,
     MicrosoftReauthorizationRequired,
     MicrosoftTransientError,
 )
 from mail_control.modules.mail.microsoft_sync import MicrosoftSyncService
 from mail_control.modules.mail.models import AccountStatus, MailProvider
 from mail_control.modules.mail.repository import MailRepository
+from mail_control.modules.mail.token_manager import AccountUnavailableError, provider_client
 from mail_control.modules.system.telegram_alerts import TelegramAlerts
 from mail_control.settings import Settings, get_settings
 
@@ -43,68 +41,46 @@ async def process_message(
         async for session in resources.database.session():
             await set_tenant_context(session, tenant_id)
             repository = MailRepository(session)
-            account = await repository.account_by_id(tenant_id, account_id)
+            account = await repository.account_by_id(tenant_id, account_id, MailProvider.MICROSOFT)
             if (
                 account is None
                 or account.provider is not MailProvider.MICROSOFT
-                or account.status is AccountStatus.DISCONNECTED
+                or account.status in {AccountStatus.DISCONNECTED, AccountStatus.REAUTH_REQUIRED}
             ):
                 return
-            cipher = CredentialCipher(
-                settings.credential_encryption_key or settings.app_secret_key
-            )
-            token: str
-            if (
-                account.encrypted_access_token
-                and account.access_token_expires_at
-                and account.access_token_expires_at
-                > datetime.now(UTC) + timedelta(minutes=2)
-            ):
-                token = cipher.decrypt(account.encrypted_access_token)
-            else:
-                if not settings.microsoft_client_id or not settings.microsoft_client_secret:
-                    raise RuntimeError("Microsoft OAuth is not configured")
-                oauth = MicrosoftOAuth(
-                    resources.redis,
-                    client_id=settings.microsoft_client_id,
-                    client_secret=settings.microsoft_client_secret,
-                    redirect_uri=settings.microsoft_redirect_uri,
-                )
-                try:
-                    tokens = await oauth.refresh_access_token(
-                        cipher.decrypt(account.encrypted_refresh_token)
-                    )
-                except MicrosoftReauthorizationRequired as error:
-                    account.status = AccountStatus.REAUTH_REQUIRED
-                    account.last_error = str(error)
-                    account.encrypted_access_token = None
-                    account.access_token_expires_at = None
-                    await repository.commit()
-                    await TelegramAlerts(settings, resources.redis).account_issue(
-                        account,
-                        str(error),
-                    )
-                    return
-                except MicrosoftError as error:
-                    account.status = AccountStatus.ERROR
-                    account.last_error = str(error)
-                    await repository.commit()
-                    await TelegramAlerts(settings, resources.redis).account_issue(
-                        account,
-                        str(error),
-                    )
-                    raise
-                token = tokens.access_token
-                account.encrypted_access_token = cipher.encrypt(token)
-                account.access_token_expires_at = tokens.expires_at
-                if tokens.refresh_token:
-                    account.encrypted_refresh_token = cipher.encrypt(tokens.refresh_token)
+            try:
+                client = await provider_client(account, session, resources, settings)
+                assert isinstance(client, MicrosoftGraphClient)
+            except AccountUnavailableError:
+                return
+            except MicrosoftReauthorizationRequired as error:
+                account.status = AccountStatus.REAUTH_REQUIRED
+                account.last_error = str(error)
+                account.encrypted_access_token = None
+                account.access_token_expires_at = None
+                await repository.commit()
+                await TelegramAlerts(settings, resources.redis).account_issue(account, str(error))
+                return
+            except MicrosoftError as error:
+                account.status = AccountStatus.ERROR
+                account.last_error = str(error)
+                await repository.commit()
+                await TelegramAlerts(settings, resources.redis).account_issue(account, str(error))
+                raise
             alerts = TelegramAlerts(settings, resources.redis)
             try:
                 await MicrosoftSyncService(repository).synchronize(
                     account,
-                    MicrosoftGraphClient(token),
+                    client,
                 )
+            except MicrosoftReauthorizationRequired as error:
+                await set_tenant_context(session, tenant_id)
+                account.status = AccountStatus.REAUTH_REQUIRED
+                account.encrypted_access_token = None
+                account.access_token_expires_at = None
+                await repository.commit()
+                await alerts.account_issue(account, str(error))
+                return
             except MicrosoftTransientError:
                 raise
             except Exception as error:

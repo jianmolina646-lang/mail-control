@@ -130,6 +130,13 @@ class EmailMessage(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     is_read: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_starred: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     mailbox: Mapped[str] = mapped_column(String(16), default="inbox", nullable=False)
+    provider_is_read: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    provider_is_starred: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    provider_mailbox: Mapped[str] = mapped_column(String(16), default="inbox", nullable=False)
+    provider_folder_id: Mapped[str | None] = mapped_column(String(512))
+    local_is_read: Mapped[bool | None] = mapped_column(Boolean)
+    local_is_starred: Mapped[bool | None] = mapped_column(Boolean)
+    local_mailbox: Mapped[str | None] = mapped_column(String(16))
 
     account: Mapped[MailAccount] = relationship(back_populates="messages")
 

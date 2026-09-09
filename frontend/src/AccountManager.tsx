@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   AlertTriangle, Bell, CheckCircle2, Clock, Inbox, LayoutList, LogOut, Mail,
   MailOpen, PanelLeft, Pause, Plus, RefreshCw, Rows3, Search, ShieldAlert,
@@ -19,6 +19,7 @@ import {
   type Provider, type SyncStatus,
 } from "@/lib/mail-data";
 import { cn } from "@/lib/utils";
+import { mapAccount } from "@/lib/mail-state";
 
 const PAGE_SIZE = 40;
 type StatusFilter = SyncStatus | "atencion";
@@ -33,6 +34,8 @@ const statusChips: { id: StatusFilter; label: string }[] = [
 
 export function AccountManager() {
   const navigate = useNavigate();
+  const [params] = useSearchParams();
+  const [now, setNow] = useState(Date.now());
   const queryClient = useQueryClient();
   const canManage = currentUser()?.role !== "viewer";
   const accountQuery = useQuery({ queryKey: ["accounts"], queryFn: () => api<Account[]>("/v1/mail/accounts") });
@@ -54,11 +57,11 @@ export function AccountManager() {
   }, [rawQuery]);
 
   const rawAccounts = useMemo(() => accountQuery.data ?? [], [accountQuery.data]);
-  const accounts = useMemo(() => rawAccounts.map(mapAccount), [rawAccounts]);
+  const accounts = useMemo(() => rawAccounts.map((account) => mapAccount(account, now)), [rawAccounts, now]);
   const rawById = useMemo(() => new Map(rawAccounts.map((account) => [account.id, account])), [rawAccounts]);
   const stats = useCallback((account: MailAccount) => {
     const source = rawById.get(account.id);
-    return { messages: source?.message_count ?? 0, unread: 0, alerts: source?.alert_count ?? 0 };
+    return { messages: source?.message_count ?? 0, unread: source?.unread_count ?? 0, alerts: source?.alert_count ?? 0 };
   }, [rawById]);
   const providersPresent = useMemo(() => [...new Set(accounts.map((account) => account.provider))], [accounts]);
 
@@ -89,7 +92,7 @@ export function AccountManager() {
     errors: accounts.filter((account) => account.status === "error" || account.status === "credenciales-vencidas").length,
     pending: accounts.filter((account) => account.status === "requiere-autorizacion" || account.status === "pausada").length,
     synced: rawAccounts.reduce((sum, account) => sum + account.message_count, 0),
-    unread: 0,
+    unread: rawAccounts.reduce((sum, account) => sum + (account.unread_count ?? 0), 0),
   }), [accounts, rawAccounts]);
   const metrics: Metric[] = [
     { id: "total", label: "Cuentas", value: totals.total, icon: Users },
@@ -105,6 +108,8 @@ export function AccountManager() {
   const toggleProvider = (provider: Provider) => setProviderFilter((previous) => { const next = new Set(previous); if (next.has(provider)) next.delete(provider); else next.add(provider); return next; });
   const toggleStatus = (status: StatusFilter) => setStatusFilter((previous) => { const next = new Set(previous); if (next.has(status)) next.delete(status); else next.add(status); return next; });
   const activeFilters = providerFilter.size + statusFilter.size;
+  useEffect(() => { setSelected(new Set()); }, [rawQuery, providerFilter, statusFilter]);
+  useEffect(() => { const timer = window.setInterval(() => setNow(Date.now()), 30_000); return () => window.clearInterval(timer); }, []);
 
   async function connect(provider: "gmail" | "microsoft") {
     setError("");
@@ -125,7 +130,7 @@ export function AccountManager() {
     const raw = rawById.get(account.id); if (!raw) return;
     setError("");
     try {
-      const result = await api<{ authorization_url: string }>(`/v1/providers/${raw.provider}/authorize`, { method: "POST" });
+      const result = await api<{ authorization_url: string }>(`/v1/providers/${raw.provider}/authorize`, { method: "POST", body: JSON.stringify({ account_id: raw.id }) });
       window.location.assign(result.authorization_url);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "No se pudo reautorizar la cuenta."); }
   }
@@ -136,7 +141,7 @@ export function AccountManager() {
     finally { setSyncing(false); }
   }
   function logout() { clearSession(); queryClient.clear(); navigate("/login", { replace: true }); }
-  const selectedAccounts = accounts.filter((account) => selected.has(account.id));
+  const selectedAccounts = visible.filter((account) => selected.has(account.id));
 
   return (
     <main className="sleek-mail clear-accounts fixed inset-0 z-[70] flex h-[100dvh] min-w-0 overflow-hidden bg-background text-foreground">
@@ -149,12 +154,13 @@ export function AccountManager() {
         </header>
         <div className="scroll-slim min-w-0 flex-1 overflow-y-auto p-4 lg:p-6">
           <div className="mx-auto flex min-w-0 max-w-[1600px] flex-col gap-5">
-            <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-end gap-3"><div className="min-w-0"><p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-primary">Proveedores</p><h1 className="truncate text-[20px] font-semibold tracking-tight lg:text-[24px]">Cuentas conectadas</h1><p className="truncate text-[12px] text-muted-foreground">{filtered.length.toLocaleString("es")} de {totals.total.toLocaleString("es")} buzones · sincronización, estado y volumen en tiempo real.</p></div><div className="flex shrink-0 items-center gap-1 rounded-xl border border-border bg-surface-2 p-1"><DensityButton active={density === "comoda"} onClick={() => setDensity("comoda")} icon={Rows3} label="Cómoda" /><DensityButton active={density === "compacta"} onClick={() => setDensity("compacta")} icon={LayoutList} label="Compacta" /></div></div>
+            <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-end gap-3"><div className="min-w-0"><p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-primary">Proveedores</p><h1 className="truncate text-[20px] font-semibold tracking-tight lg:text-[24px]">Cuentas conectadas</h1><p className="truncate text-[12px] text-muted-foreground">{filtered.length.toLocaleString("es")} de {totals.total.toLocaleString("es")} buzones · sincronización, estado y volumen registrado.</p></div><div className="flex shrink-0 items-center gap-1 rounded-xl border border-border bg-surface-2 p-1"><DensityButton active={density === "comoda"} onClick={() => setDensity("comoda")} icon={Rows3} label="Cómoda" /><DensityButton active={density === "compacta"} onClick={() => setDensity("compacta")} icon={LayoutList} label="Compacta" /></div></div>
             <MetricsGrid metrics={metrics} />
+            {params.has("oauth_error") && <div role="alert" className="rounded-xl border border-warning/30 bg-warning/10 px-3 py-2 text-[12px]">La conexión no se completó. Reintenta la autorización de la cuenta.</div>}
             {error && <div role="alert" className="rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-2 text-[12px] text-destructive">{error}</div>}
             <div className="scroll-slim flex min-w-0 items-center gap-1.5 overflow-x-auto pb-0.5">{providersPresent.map((provider) => <Chip key={provider} active={providerFilter.has(provider)} onClick={() => { toggleProvider(provider); setPageSize(PAGE_SIZE); }} label={providerLabels[provider]} />)}<span className="mx-1 h-5 w-px shrink-0 bg-border" />{statusChips.map((status) => <Chip key={status.id} active={statusFilter.has(status.id)} onClick={() => { toggleStatus(status.id); setPageSize(PAGE_SIZE); }} label={status.label} tone={status.id === "error" || status.id === "atencion" ? "danger" : undefined} />)}{activeFilters > 0 && <button type="button" onClick={() => { setProviderFilter(new Set()); setStatusFilter(new Set()); }} className="ml-1 flex h-7 shrink-0 items-center gap-1 rounded-full px-2 text-[11.5px] text-muted-foreground hover:text-foreground"><X className="size-3" />Limpiar ({activeFilters})</button>}</div>
-            {selected.size > 0 && <div className="scroll-slim flex items-center gap-1.5 overflow-x-auto rounded-xl border border-primary/25 bg-primary/[0.07] px-2.5 py-1.5"><span className="shrink-0 rounded bg-primary/15 px-1.5 py-0.5 text-[11px] font-semibold text-primary">{selected.size}</span><BulkBtn icon={RefreshCw} label="Sincronizar" onClick={() => runSync(selectedAccounts)} disabled={!canManage} /><BulkBtn icon={ShieldAlert} label="Reautorizar" onClick={() => selectedAccounts[0] && reauthorize(selectedAccounts[0])} disabled={!canManage || selectedAccounts.length !== 1} /><BulkBtn icon={Pause} label="Pausar" disabled /><BulkBtn icon={Users} label="Asignar cliente" disabled /><BulkBtn icon={Mail} label="Ver bandeja" onClick={() => navigate("/correos")} /><BulkBtn icon={AlertTriangle} label="Desconectar" tone="danger" disabled /><button type="button" onClick={() => setSelected(new Set())} aria-label="Cancelar selección" className="ml-auto grid size-7 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-surface-3 hover:text-foreground"><X className="size-3.5" /></button></div>}
-            <AccountsTable accounts={visible} stats={stats} selected={selected} onToggle={toggle} onToggleAll={toggleAll} sortKey={sortKey} sortDir={sortDir} onSort={(key) => { if (key === sortKey) setSortDir((direction) => direction === "asc" ? "desc" : "asc"); else { setSortKey(key); setSortDir("asc"); } }} density={density} canManage={canManage} actions={{ sync: syncAccount, inbox: () => navigate("/correos"), reauthorize }} />
+            {selected.size > 0 && <div className="scroll-slim flex items-center gap-1.5 overflow-x-auto rounded-xl border border-primary/25 bg-primary/[0.07] px-2.5 py-1.5"><span className="shrink-0 rounded bg-primary/15 px-1.5 py-0.5 text-[11px] font-semibold text-primary">{selected.size}</span><BulkBtn icon={RefreshCw} label="Sincronizar" onClick={() => runSync(selectedAccounts)} disabled={!canManage} /><BulkBtn icon={ShieldAlert} label="Reautorizar" onClick={() => selectedAccounts[0] && reauthorize(selectedAccounts[0])} disabled={!canManage || selectedAccounts.length !== 1} /><BulkBtn icon={Pause} label="Pausar" disabled /><BulkBtn icon={Users} label="Asignar cliente" disabled /><BulkBtn icon={Mail} label="Ver bandeja" disabled={selectedAccounts.length !== 1} onClick={() => selectedAccounts[0] && navigate(`/correos?account_id=${encodeURIComponent(selectedAccounts[0].id)}`)} /><BulkBtn icon={AlertTriangle} label="Desconectar" tone="danger" disabled /><button type="button" onClick={() => setSelected(new Set())} aria-label="Cancelar selección" className="ml-auto grid size-7 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-surface-3 hover:text-foreground"><X className="size-3.5" /></button></div>}
+            <AccountsTable accounts={visible} stats={stats} selected={selected} onToggle={toggle} onToggleAll={toggleAll} sortKey={sortKey} sortDir={sortDir} onSort={(key) => { if (key === sortKey) setSortDir((direction) => direction === "asc" ? "desc" : "asc"); else { setSortKey(key); setSortDir("asc"); } }} density={density} canManage={canManage} actions={{ sync: syncAccount, inbox: (account) => navigate(`/correos?account_id=${encodeURIComponent(account.id)}`), reauthorize }} />
             {accountQuery.isLoading && <p className="py-8 text-center text-[12.5px] text-muted-foreground">Cargando cuentas…</p>}
             {accountQuery.isError && <button type="button" onClick={() => accountQuery.refetch()} className="rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-[12px] text-destructive">No se pudieron cargar las cuentas. Reintentar</button>}
             <div className="flex flex-wrap items-center justify-between gap-2 pb-4 text-[11.5px] text-muted-foreground"><span className="flex items-center gap-1.5"><Clock className="size-3.5" />Mostrando {visible.length.toLocaleString("es")} de {filtered.length.toLocaleString("es")} cuentas</span>{visible.length < filtered.length && <button type="button" onClick={() => setPageSize((size) => size + PAGE_SIZE)} className="rounded-lg border border-border bg-surface-2 px-3 py-1.5 text-[12px] text-foreground transition-colors hover:border-border-strong">Cargar más</button>}</div>
@@ -173,18 +179,4 @@ function DensityButton({ active, onClick, icon: Icon, label }: { active: boolean
 }
 function BulkBtn({ icon: Icon, label, tone, disabled, onClick }: { icon: typeof RefreshCw; label: string; tone?: "danger"; disabled?: boolean; onClick?: () => void; }) {
   return <button type="button" onClick={onClick} disabled={disabled} className={cn("flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-[11.5px] text-muted-foreground transition-colors hover:bg-surface-3 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40", tone === "danger" && "hover:bg-destructive/12 hover:text-destructive")}><Icon className="size-3.5" />{label}</button>;
-}
-function providerFor(account: Account): Provider {
-  if (account.provider === "gmail") return "gmail";
-  const domain = account.email.split("@")[1]?.toLowerCase() ?? "";
-  if (domain.includes("hotmail")) return "hotmail";
-  if (domain.includes("live")) return "live";
-  return "outlook";
-}
-function statusFor(status: Account["status"]): SyncStatus {
-  return ({ connected: "conectada", syncing: "sincronizando", error: "error", reauth_required: "requiere-autorizacion", disconnected: "pausada" } as const)[status];
-}
-function mapAccount(account: Account): MailAccount {
-  const provider = providerFor(account);
-  return { id: account.id, alias: account.email.split("@")[0] || account.email, email: account.email, provider, client: "Sin asignar", platform: provider === "gmail" ? "Google Gmail" : "Microsoft Mail", group: "Workspace", country: "—", labels: [], favorite: false, status: statusFor(account.status), lastSync: account.last_synced_at ? new Date(account.last_synced_at).toLocaleString("es-PE") : "Pendiente", messageCount: account.message_count, statusDetail: account.last_error ?? (account.status === "error" ? "La última sincronización falló." : undefined) };
 }

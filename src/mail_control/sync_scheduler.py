@@ -15,6 +15,7 @@ from mail_control.infrastructure.resources import Resources
 from mail_control.modules.mail.gmail_push import renew_due_gmail_watches
 from mail_control.modules.mail.microsoft_push import renew_due_microsoft_graph_subscriptions
 from mail_control.modules.mail.models import AccountStatus, MailAccount, MailProvider
+from mail_control.modules.system.mail_freshness import monitor_mail_freshness
 from mail_control.settings import get_settings
 
 logger = structlog.get_logger(__name__)
@@ -49,9 +50,7 @@ async def enqueue_due_accounts(resources: Resources, interval: int) -> int:
     try:
         for account_id, tenant_id, provider in accounts:
             routing_key = (
-                "mail.sync.gmail"
-                if provider == MailProvider.GMAIL
-                else "mail.sync.microsoft"
+                "mail.sync.gmail" if provider == MailProvider.GMAIL else "mail.sync.microsoft"
             )
             await channel.default_exchange.publish(
                 aio_pika.Message(
@@ -85,11 +84,9 @@ async def run() -> None:
                 try:
                     queued = await enqueue_due_accounts(resources, interval)
                     watches_renewed = await renew_due_gmail_watches(resources, get_settings())
-                    microsoft_subscriptions_renewed = (
-                        await renew_due_microsoft_graph_subscriptions(
-                            resources,
-                            get_settings(),
-                        )
+                    microsoft_subscriptions_renewed = await renew_due_microsoft_graph_subscriptions(
+                        resources,
+                        get_settings(),
                     )
                     logger.info("automatic_sync_scheduled", accounts_queued=queued)
                     if watches_renewed:
@@ -102,6 +99,11 @@ async def run() -> None:
                 except Exception:
                     logger.exception("automatic_sync_schedule_failed")
                 finally:
+                    try:
+                        attention = await monitor_mail_freshness(resources, get_settings())
+                        logger.info("mail_freshness_checked", attention_accounts=attention)
+                    except Exception:
+                        logger.exception("mail_freshness_check_failed")
                     with suppress(LockError):
                         await lock.release()
             await asyncio.sleep(interval)

@@ -10,10 +10,12 @@ from mail_control.modules.mail.gmail import (
     GmailClient,
     GmailHistoryExpired,
     GmailMessageNotFound,
+    GmailReauthRequired,
 )
 from mail_control.modules.mail.models import (
     AccountStatus,
     MailAccount,
+    MailProvider,
     SyncKind,
     SyncRun,
     SyncStatus,
@@ -35,6 +37,13 @@ def message_values(account: MailAccount, message: dict[str, Any]) -> dict[str, o
         except (TypeError, ValueError):
             received_at = None
     internal_date = message.get("internalDate")
+    labels = message.get("labelIds", [])
+    mailbox = next((box for label, box in (
+        ("TRASH", "trash"), ("SPAM", "spam"), ("DRAFT", "drafts"),
+        ("INBOX", "inbox"), ("SENT", "sent"),
+    ) if label in labels), "archive")
+    is_read = "UNREAD" not in labels
+    is_starred = "STARRED" in labels
     return {
         "tenant_id": account.tenant_id,
         "mail_account_id": account.id,
@@ -52,6 +61,13 @@ def message_values(account: MailAccount, message: dict[str, Any]) -> dict[str, o
         "label_ids": message.get("labelIds", []),
         "payload": message,
         "deleted_at": None,
+        "is_read": is_read,
+        "is_starred": is_starred,
+        "mailbox": mailbox,
+        "provider_is_read": is_read,
+        "provider_is_starred": is_starred,
+        "provider_mailbox": mailbox,
+        "provider_folder_id": None,
     }
 
 
@@ -60,6 +76,8 @@ class GmailSyncService:
         self.repository = repository
 
     async def synchronize(self, account: MailAccount, client: GmailClient) -> SyncRun:
+        if account.provider is not MailProvider.GMAIL:
+            raise ValueError("Gmail synchronization requires a Gmail account")
         kind = SyncKind.INCREMENTAL if account.history_cursor else SyncKind.INITIAL
         run = SyncRun(
             tenant_id=account.tenant_id,
@@ -69,6 +87,7 @@ class GmailSyncService:
             started_at=datetime.now(UTC),
         )
         self.repository.add(run)
+        run.messages_seen = run.messages_created = run.messages_updated = 0
         account.status = AccountStatus.SYNCING
         await self.repository.flush()
         try:
@@ -87,7 +106,10 @@ class GmailSyncService:
         except Exception as error:
             run.status = SyncStatus.FAILED
             run.error = str(error)[:2000]
-            account.status = AccountStatus.ERROR
+            account.status = (
+                AccountStatus.REAUTH_REQUIRED if isinstance(error, GmailReauthRequired)
+                else AccountStatus.ERROR
+            )
             account.last_error = run.error
             raise
         finally:
@@ -102,7 +124,9 @@ class GmailSyncService:
         run: SyncRun,
     ) -> None:
         page_token: str | None = None
-        newest_history_id: str | None = None
+        # Capture the baseline before listing: messages can arrive during an import,
+        # and even an empty mailbox needs a usable history checkpoint.
+        baseline = (await client.profile()).get("historyId")
         while True:
             page = await client.list_messages(page_token=page_token)
             for item in page.get("messages", []):
@@ -116,13 +140,11 @@ class GmailSyncService:
                     )
                     continue
                 await self._store(account, message, run)
-                if newest_history_id is None:
-                    newest_history_id = message.get("historyId")
             page_token = page.get("nextPageToken")
             if not page_token:
                 break
-        if newest_history_id:
-            account.history_cursor = newest_history_id
+        if baseline:
+            account.history_cursor = str(baseline)
 
     async def _incremental_sync(
         self,
@@ -136,14 +158,16 @@ class GmailSyncService:
         while True:
             page = await client.history(cursor, page_token=page_token)
             message_ids = {
-                added["message"]["id"]
+                change["message"]["id"]
                 for history in page.get("history", [])
-                for added in history.get("messagesAdded", [])
+                for event in ("messagesAdded", "messagesDeleted", "labelsAdded", "labelsRemoved")
+                for change in history.get(event, [])
             }
             for message_id in message_ids:
                 try:
                     message = await client.get_message(message_id, full=True)
                 except GmailMessageNotFound:
+                    await self.repository.mark_deleted(account.id, message_id, datetime.now(UTC))
                     logger.info(
                         "gmail_message_missing_during_sync",
                         account_id=str(account.id),
@@ -155,9 +179,11 @@ class GmailSyncService:
                     message,
                     run,
                 )
-            account.history_cursor = page.get("historyId", account.history_cursor)
             page_token = page.get("nextPageToken")
             if not page_token:
+                # historyId describes the whole result, not the processed page.
+                # Failed later pages must replay from the original checkpoint.
+                account.history_cursor = str(page.get("historyId", cursor))
                 break
 
     async def _store(

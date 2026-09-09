@@ -17,6 +17,7 @@ import { ProviderIcon } from "@/components/mail/provider-icon";
 import { cn } from "@/lib/utils";
 import { apiBlob } from "@/lib/api";
 import type { MailAccount, MailMessage } from "@/lib/mail-data";
+import type { Attachment } from "@/lib/types";
 
 interface ReadingPaneProps {
   message: MailMessage | null;
@@ -26,6 +27,19 @@ interface ReadingPaneProps {
   onToggleStar: (id: string) => void;
   onArchive: (id: string) => void;
   onDelete: (id: string) => void;
+  loading?: boolean;
+  error?: string;
+  onRetry: () => void;
+  threadLoading?: boolean;
+  threadError?: boolean;
+  onRetryThread: () => void;
+  onOpenThread: (id: string) => void;
+  hasMoreThread?: boolean;
+  loadingMoreThread?: boolean;
+  onLoadMoreThread: () => void;
+  returnSearch?: string;
+  contentWarning?: string | null;
+  attachmentsError?: string | null;
 }
 
 export function ReadingPane({
@@ -36,6 +50,9 @@ export function ReadingPane({
   onToggleStar,
   onArchive,
   onDelete,
+  loading, error, onRetry, threadLoading, threadError, onRetryThread, onOpenThread,
+  hasMoreThread, loadingMoreThread, onLoadMoreThread, returnSearch,
+  contentWarning, attachmentsError,
 }: ReadingPaneProps) {
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
   const codes = useMemo(() => message ? extractCodes(`${message.subject}\n${message.preview}\n${message.body}\n${stripHtml(message.bodyHtml ?? "")}`) : [], [message]);
@@ -120,6 +137,7 @@ export function ReadingPane({
                 <div className="mt-2 grid gap-1 rounded-lg bg-surface-2 px-3 py-2 text-[11.5px] sm:grid-cols-2">
                   <p><span className="text-foreground/70">De:</span> {message.sender}</p>
                   <p><span className="text-foreground/70">Para:</span> {message.to}</p>
+                  {message.cc && <p><span className="text-foreground/70">Cc:</span> {message.cc}</p>}
                   <p><span className="text-foreground/70">Cuenta:</span> {account?.email ?? "—"}</p>
                   <p><span className="text-foreground/70">Fecha:</span> {message.date} {message.time}</p>
                 </div>
@@ -127,7 +145,7 @@ export function ReadingPane({
             </div>
           </div>
 
-          {codes.length > 0 && (
+          {!loading && !error && codes.length > 0 && (
             <section className="mt-5 rounded-xl border border-primary/25 bg-primary/[0.06] p-3" aria-label="Códigos detectados">
               <div className="mb-2 flex items-center gap-2 text-[12px] font-semibold text-primary"><KeyRound className="size-4" /> Código detectado</div>
               <div className="flex flex-wrap gap-2">{codes.map((code) => <button key={code} type="button" onClick={() => void copyCode(code)} className="flex items-center gap-2 rounded-lg border border-primary/20 bg-card px-3 py-2 font-mono text-lg font-bold tracking-[0.16em] text-foreground shadow-sm transition hover:border-primary/50"><span>{code}</span>{copiedCode === code ? <Check className="size-4 text-primary" /> : <Copy className="size-4 text-muted-foreground" />}</button>)}</div>
@@ -135,47 +153,69 @@ export function ReadingPane({
             </section>
           )}
 
-          {message.bodyHtml ? (
-            <EmailHtml key={message.id} messageId={message.id} subject={message.subject} html={message.bodyHtml} />
+          {contentWarning && <div role="alert" className="mt-5 rounded-xl border border-warning/30 bg-warning/10 p-3 text-[12px] text-foreground">{contentWarning} <button type="button" onClick={onRetry} className="underline">Reintentar contenido</button></div>}
+          {attachmentsError && <div role="alert" className="mt-3 rounded-xl border border-warning/30 bg-warning/10 p-3 text-[12px] text-foreground">{attachmentsError} <button type="button" onClick={onRetry} className="underline">Reintentar adjuntos</button></div>}
+          {loading ? <p role="status" className="mt-7 text-sm text-muted-foreground">Cargando contenido completo…</p> : error ? <div role="alert" className="mt-7 rounded-xl border border-destructive/30 p-4 text-sm text-destructive">{error}<button type="button" className="ml-3 underline" onClick={onRetry}>Reintentar contenido</button></div> : message.bodyHtml ? (
+            <EmailHtml key={message.id} messageId={message.id} subject={message.subject} html={message.bodyHtml} attachments={message.attachments} />
           ) : (
             <div className="mt-7 min-h-32 max-w-[72ch] whitespace-pre-wrap break-words text-[14.5px] leading-7 text-foreground/90">
               {message.body}
             </div>
           )}
 
-          {message.attachments.length > 0 && (
+          {!loading && !error && message.attachments.length > 0 && (
             <div className="mt-6 flex flex-wrap gap-2">
               {message.attachments.map((file) => (
-                <span key={file} className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-[12px] text-foreground/85">
-                  <Paperclip className="size-3.5 text-muted-foreground" /> {file}
-                </span>
+                <AttachmentDownload key={file.id} attachment={file} />
               ))}
             </div>
           )}
 
-          <Link to={`/analisis?message_id=${encodeURIComponent(message.id)}`} className="mt-8 flex items-center justify-between rounded-xl border border-primary/20 bg-primary/[0.05] p-3 text-[12px] font-semibold text-primary transition-colors hover:border-primary/35 hover:bg-primary/[0.08]">
+          <Link to={`/analisis?message_id=${encodeURIComponent(message.id)}&return_to=${encodeURIComponent(`/correos${returnSearch ? `?${returnSearch}` : ""}`)}`} className="mt-8 flex items-center justify-between rounded-xl border border-primary/20 bg-primary/[0.05] p-3 text-[12px] font-semibold text-primary transition-colors hover:border-primary/35 hover:bg-primary/[0.08]">
             <span className="flex items-center gap-1.5"><Sparkles className="size-3.5" /> Ver análisis IA separado</span>
             <span aria-hidden="true">→</span>
           </Link>
 
-          {(thread.length > 1 || (message.thread?.length ?? 0) > 0) && (
+          {(thread.length > 1 || threadLoading || threadError || hasMoreThread) && (
             <section className="mt-6 space-y-2">
               <p className="text-[12px] font-semibold text-foreground">Conversación</p>
+              {threadLoading && <p role="status" className="text-[12px] text-muted-foreground">Cargando conversación…</p>}
+              {threadError && <p role="alert" className="text-[12px] text-destructive">No se pudo cargar la conversación. <button type="button" className="underline" onClick={onRetryThread}>Reintentar conversación</button></p>}
               {thread.filter((item) => item.id !== message.id).map((item) => (
-                <details key={item.id} className="rounded-xl border border-border px-3 py-2">
-                  <summary className="cursor-pointer list-none text-[12.5px] text-foreground/85">
+                <button type="button" key={item.id} onClick={() => onOpenThread(item.id)} className="block w-full rounded-xl border border-border px-3 py-3 text-left hover:bg-surface-2">
+                  <span className="text-[12.5px] text-foreground/85">
                     <span className="font-medium">{item.senderName}</span>
                     <span className="text-muted-foreground"> · {item.date}</span>
-                  </summary>
-                  <p className="mt-3 whitespace-pre-wrap text-[13px] leading-6 text-muted-foreground">{item.body}</p>
-                </details>
+                  </span>
+                  <span className="mt-1 block text-[12px] text-muted-foreground">{item.subject} · Abrir mensaje completo</span>
+                </button>
               ))}
+              {hasMoreThread && <Button variant="ghost" size="sm" disabled={loadingMoreThread} onClick={onLoadMoreThread}>{loadingMoreThread ? "Cargando conversación…" : "Cargar más de la conversación"}</Button>}
             </section>
           )}
         </div>
       </div>
     </article>
   );
+}
+
+export function AttachmentDownload({ attachment }: { attachment: Attachment }) {
+  const [downloading, setDownloading] = useState(false);
+  const [error, setError] = useState("");
+  async function download() {
+    setDownloading(true); setError("");
+    try {
+      if (!attachment.download_url.startsWith("/v1/mail/messages/")) throw new Error("El adjunto no tiene una ruta de descarga válida.");
+      const blob = await apiBlob(attachment.download_url);
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url; anchor.download = attachment.filename || "adjunto";
+      document.body.append(anchor); anchor.click(); anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "No se pudo descargar el adjunto."); }
+    finally { setDownloading(false); }
+  }
+  return <div><button type="button" onClick={() => void download()} disabled={downloading} className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-[12px] text-foreground/85 hover:bg-surface-2 disabled:opacity-50"><Paperclip className="size-3.5 text-muted-foreground" />{downloading ? "Descargando…" : attachment.filename}<span className="text-muted-foreground">{attachment.size != null ? `${Math.max(1, Math.ceil(attachment.size / 1024))} KB` : ""}</span></button>{error && <p role="alert" className="mt-1 max-w-xs text-[11px] text-destructive">{error}</p>}</div>;
 }
 
 function stripHtml(html: string) {
@@ -190,24 +230,33 @@ function extractCodes(text: string) {
   return [...new Set(candidates)].slice(0, 4);
 }
 
-function EmailHtml({ messageId, subject, html }: { messageId: string; subject: string; html: string }) {
+export function EmailHtml({ messageId, subject, html, attachments }: { messageId: string; subject: string; html: string; attachments: Attachment[] }) {
   const [height, setHeight] = useState(420);
   const [frameScrollable, setFrameScrollable] = useState(false);
   const [proxiedHtml, setProxiedHtml] = useState(html);
   const [loadingImages, setLoadingImages] = useState(true);
+  const [allowRemote, setAllowRemote] = useState(false);
+  const [imageErrors, setImageErrors] = useState(false);
+  const [imageAttempt, setImageAttempt] = useState(0);
+  const hasRemote = /<img\b[^>]*\bsrc\s*=\s*["']?https?:\/\//i.test(html);
   const frameRef = useRef<HTMLIFrameElement>(null);
 
   useEffect(() => {
     let cancelled = false;
     const objectUrls: string[] = [];
     async function proxyImages() {
+      setLoadingImages(true); setImageErrors(false);
       const document = new DOMParser().parseFromString(html, "text/html");
       const images = [...document.querySelectorAll("img")];
       let remoteIndex = 0;
       const jobs = images.map(async (image) => {
         const source = image.getAttribute("src") ?? "";
-        if (!/^https?:\/\//i.test(source)) return;
-        const imageIndex = remoteIndex++;
+        image.removeAttribute("srcset");
+        const imageIndex = /^https?:\/\//i.test(source) ? remoteIndex++ : -1;
+        if (imageIndex >= 0 && !allowRemote) { image.removeAttribute("src"); return; }
+        const cid = source.replace(/^cid:/i, "").replace(/^<|>$/g, "");
+        const inline = /^cid:/i.test(source) ? attachments.find((file) => file.content_id?.replace(/^<|>$/g, "") === cid && file.inline_url) : undefined;
+        if (imageIndex < 0 && !inline) { if (!/^data:image\/(png|gif|jpeg|webp);/i.test(source)) image.removeAttribute("src"); return; }
         const width = Number.parseInt(image.getAttribute("width") ?? "", 10);
         const height = Number.parseInt(image.getAttribute("height") ?? "", 10);
         if ((Number.isFinite(width) && width <= 2) || (Number.isFinite(height) && height <= 2)) {
@@ -215,12 +264,16 @@ function EmailHtml({ messageId, subject, html }: { messageId: string; subject: s
           return;
         }
         try {
-          const blob = await apiBlob(`/v1/mail/messages/${encodeURIComponent(messageId)}/images/${imageIndex}`);
+          const path = inline?.inline_url ?? `/v1/mail/messages/${encodeURIComponent(messageId)}/images/${imageIndex}`;
+          if (!path.startsWith("/v1/mail/messages/")) throw new Error("Ruta de imagen no válida.");
+          const blob = await apiBlob(path);
+          if (cancelled) return;
           const objectUrl = URL.createObjectURL(blob);
           objectUrls.push(objectUrl);
           image.setAttribute("src", objectUrl);
           image.removeAttribute("srcset");
         } catch {
+          if (!cancelled) setImageErrors(true);
           image.removeAttribute("src");
           image.removeAttribute("srcset");
         }
@@ -236,7 +289,7 @@ function EmailHtml({ messageId, subject, html }: { messageId: string; subject: s
       cancelled = true;
       objectUrls.forEach((url) => URL.revokeObjectURL(url));
     };
-  }, [html, messageId]);
+  }, [html, messageId, attachments, allowRemote, imageAttempt]);
 
   function resizeFrame() {
     const document = frameRef.current?.contentDocument;
@@ -253,7 +306,9 @@ function EmailHtml({ messageId, subject, html }: { messageId: string; subject: s
 
   return (
     <section className="mt-7 overflow-hidden rounded-xl border border-border bg-white">
-      {loadingImages && <div className="border-b border-border bg-surface-2 px-3 py-2 text-[11.5px] text-muted-foreground">Cargando imágenes de forma segura…</div>}
+      {hasRemote && !allowRemote && <div className="border-b border-border bg-surface-2 px-3 py-3 text-[11.5px] text-muted-foreground">Las imágenes externas están bloqueadas. Cargarlas puede confirmar la apertura al remitente.<button type="button" onClick={() => setAllowRemote(true)} className="ml-2 font-medium text-primary underline">Mostrar imágenes externas</button></div>}
+      {loadingImages && <div role="status" className="border-b border-border bg-surface-2 px-3 py-2 text-[11.5px] text-muted-foreground">Preparando imágenes…</div>}
+      {imageErrors && <div role="alert" className="border-b border-border px-3 py-2 text-[11.5px] text-destructive">Algunas imágenes no se pudieron cargar. <button type="button" className="underline" onClick={() => setImageAttempt((value) => value + 1)}>Reintentar imágenes</button></div>}
       <iframe
         ref={frameRef}
         title={`Contenido de ${subject}`}
@@ -277,6 +332,18 @@ function EmailHtml({ messageId, subject, html }: { messageId: string; subject: s
 }
 
 function emailDocument(html: string) {
+  const document = new DOMParser().parseFromString(html, "text/html");
+  document.querySelectorAll("script,iframe,object,embed,form,base,meta,link").forEach((element) => element.remove());
+  document.querySelectorAll("*").forEach((element) => {
+    for (const attribute of [...element.attributes]) {
+      if (/^on/i.test(attribute.name) || ["srcdoc", "srcset", "action", "formaction"].includes(attribute.name)) element.removeAttribute(attribute.name);
+    }
+    if (element.tagName === "A") {
+      if (!/^(https?:|mailto:)/i.test(element.getAttribute("href") ?? "")) element.removeAttribute("href");
+      element.setAttribute("target", "_blank"); element.setAttribute("rel", "noopener noreferrer");
+    }
+  });
+  html = document.documentElement.outerHTML;
   const headContent = `
     <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; font-src data:; media-src 'none'; object-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'">
     <meta name="viewport" content="width=device-width, initial-scale=1">
