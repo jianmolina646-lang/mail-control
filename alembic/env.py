@@ -22,7 +22,12 @@ config = context.config
 if config.config_file_name:
     fileConfig(config.config_file_name)
 
-config.set_main_option("sqlalchemy.url", get_settings().database_url)
+settings = get_settings()
+# Runtime traffic uses the restricted application role.  Schema migrations,
+# however, need the explicitly configured system role in production because it
+# owns the historical tables and is permitted to run global maintenance.
+migration_database_url = settings.system_database_url or settings.database_url
+config.set_main_option("sqlalchemy.url", migration_database_url)
 target_metadata = Base.metadata
 
 
@@ -50,7 +55,7 @@ async def run_async_migrations() -> None:
 
 if context.is_offline_mode():
     context.configure(
-        url=get_settings().database_url,
+        url=migration_database_url,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
