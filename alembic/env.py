@@ -23,10 +23,14 @@ if config.config_file_name:
     fileConfig(config.config_file_name)
 
 settings = get_settings()
-# Runtime traffic uses the restricted application role.  Schema migrations,
-# however, need the explicitly configured system role in production because it
-# owns the historical tables and is permitted to run global maintenance.
-migration_database_url = settings.system_database_url or settings.database_url
+# Runtime traffic uses the restricted application role and global jobs may use
+# a BYPASSRLS role.  DDL needs the table owner, so deployments can provide an
+# explicit, dedicated connection without broadening either runtime role.
+migration_database_url = (
+    settings.migration_database_url
+    or settings.system_database_url
+    or settings.database_url
+)
 config.set_main_option("sqlalchemy.url", migration_database_url)
 target_metadata = Base.metadata
 

@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     app_secret_key: str = Field(min_length=32)
     database_url: str
     system_database_url: str | None = None
+    migration_database_url: str | None = None
     redis_url: str
     rabbitmq_url: str
     allowed_origins: Annotated[tuple[str, ...], NoDecode] = ("http://localhost:5173",)
