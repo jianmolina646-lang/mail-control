@@ -1,8 +1,10 @@
 name: mail-control-enterprise
 services:
   drive-backup:
+    # Replaced by the host's all-sites R2 + Drive replication schedule.
+    profiles: ["legacy-drive"]
     build: ./backup-drive
-    restart: unless-stopped
+    restart: "no"
     env_file: .env.drive
     environment:
       RCLONE_CONFIG: /config/rclone.conf
