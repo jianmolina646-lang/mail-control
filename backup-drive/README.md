@@ -1,5 +1,11 @@
 # Respaldo adicional en Google Drive
 
+Este servicio independiente fue sustituido por la replicación central del VPS
+`/usr/local/sbin/production-r2-backup-sync`, que verifica R2 y Google Drive para
+todos los sitios. Se conserva solo para recuperación manual bajo el perfil
+`legacy-drive`, sin reinicio automático. No activarlo junto a la tarea central.
+Destino actual: `ProductionBackups/mail-control/enterprise/daily` en Drive.
+
 El servicio lee el volumen de archivos cifrados existente y revisa cada hora
 las copias terminadas. Valida descifrado y CRC gzip, sube con rclone y compara
 tamaño y hash remoto. MEGA conserva su proceso independiente.
