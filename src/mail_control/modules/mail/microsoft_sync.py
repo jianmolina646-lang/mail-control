@@ -5,6 +5,7 @@ from typing import Any
 
 import httpx
 
+from mail_control.modules.mail.auth_state import AccountAuthorizationChanged
 from mail_control.modules.mail.microsoft import (
     MicrosoftDeltaExpired,
     MicrosoftGraphClient,
@@ -96,7 +97,10 @@ class MicrosoftSyncService:
         self.repository.add(run)
         run.messages_seen = run.messages_created = run.messages_updated = 0
         previous_status = account.status
-        account.status = AccountStatus.SYNCING
+        if not await self.repository.update_account_state(
+            account, {"status": AccountStatus.SYNCING},
+        ):
+            raise AccountAuthorizationChanged("Account changed before synchronization")
         await self.repository.flush()
         try:
             folders = await self._all_folders(client)
@@ -115,28 +119,33 @@ class MicrosoftSyncService:
                 )
             run.kind = SyncKind.INCREMENTAL if had_cursor else SyncKind.INITIAL
             run.status = SyncStatus.SUCCEEDED
-            account.status = AccountStatus.CONNECTED
-            account.last_error = None
-            account.last_synced_at = datetime.now(UTC)
+            if not await self.repository.update_account_state(account, {
+                "status": AccountStatus.CONNECTED, "last_error": None,
+                "last_synced_at": datetime.now(UTC),
+            }):
+                raise AccountAuthorizationChanged("Account changed during synchronization")
         except MicrosoftTransientError as error:
             run.status = SyncStatus.FAILED
             run.error = str(error)[:2000]
-            account.status = (
-                previous_status
-                if previous_status is not AccountStatus.SYNCING
-                else AccountStatus.CONNECTED
-            )
-            account.last_error = run.error
+            applied = await self.repository.update_account_state(account, {
+                "status": previous_status if previous_status is not AccountStatus.SYNCING
+                else AccountStatus.CONNECTED,
+                "last_error": run.error,
+            }, error)
+            if not applied:
+                raise AccountAuthorizationChanged("Account authorization changed") from error
             raise
         except Exception as error:
             run.status = SyncStatus.FAILED
             run.error = str(error)[:2000]
-            account.status = (
-                AccountStatus.REAUTH_REQUIRED
-                if isinstance(error, MicrosoftReauthorizationRequired)
-                else AccountStatus.ERROR
-            )
-            account.last_error = run.error
+            if not isinstance(error, AccountAuthorizationChanged):
+                applied = await self.repository.update_account_state(account, {
+                    "status": AccountStatus.REAUTH_REQUIRED
+                    if isinstance(error, MicrosoftReauthorizationRequired) else AccountStatus.ERROR,
+                    "last_error": run.error,
+                }, error)
+                if not applied:
+                    raise AccountAuthorizationChanged("Account authorization changed") from error
             raise
         finally:
             run.finished_at = datetime.now(UTC)

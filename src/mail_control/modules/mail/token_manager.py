@@ -4,12 +4,17 @@ from __future__ import annotations
 
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
+from typing import Any, cast
 
 from redis.exceptions import LockError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from mail_control.infrastructure.database.tenant import set_tenant_context
 from mail_control.infrastructure.resources import Resources
+from mail_control.modules.mail.auth_state import (
+    AccountAuthorizationChanged,
+    update_account_if_current,
+)
 from mail_control.modules.mail.crypto import CredentialCipher
 from mail_control.modules.mail.gmail import GmailClient, GmailOAuth, GoogleTokens
 from mail_control.modules.mail.microsoft import (
@@ -65,11 +70,22 @@ class AccountTokenManager:
             fresh = expires is not None and expires > datetime.now(UTC) + timedelta(minutes=2)
             if current and fresh and (rejected_token is None or current != rejected_token):
                 return current
-            tokens = await self._refresh(self.cipher.decrypt(account.encrypted_refresh_token))
-            account.encrypted_access_token = self.cipher.encrypt(tokens.access_token)
-            account.access_token_expires_at = tokens.expires_at
+            expected_grant = account.encrypted_refresh_token
+            try:
+                tokens = await self._refresh(self.cipher.decrypt(expected_grant))
+            except Exception as error:
+                # Keep the exact grant that produced this response, not a later
+                # value refreshed from the account by another consumer.
+                cast(Any, error)._mail_expected_grant = expected_grant
+                raise
+            values = {
+                "encrypted_access_token": self.cipher.encrypt(tokens.access_token),
+                "access_token_expires_at": tokens.expires_at,
+            }
             if tokens.refresh_token:
-                account.encrypted_refresh_token = self.cipher.encrypt(tokens.refresh_token)
+                values["encrypted_refresh_token"] = self.cipher.encrypt(tokens.refresh_token)
+            if not await update_account_if_current(self.session, account, expected_grant, values):
+                raise AccountAuthorizationChanged("A newer authorization superseded this refresh")
             # Publish a rotated refresh grant before releasing the shared lock.
             # Partial imports are idempotent; neither synchronizer advances an
             # unfinished page sequence's checkpoint when this commit occurs.

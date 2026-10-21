@@ -50,6 +50,11 @@ export function AccountManager() {
   const [pageSize, setPageSize] = useState(PAGE_SIZE);
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState("");
+  const [imapOpen, setImapOpen] = useState(false);
+  const [imapEmail, setImapEmail] = useState("");
+  const [imapPassword, setImapPassword] = useState("");
+  const [imapSaving, setImapSaving] = useState(false);
+  const [connecting, setConnecting] = useState<"gmail" | "microsoft" | null>(null);
 
   useEffect(() => {
     const timer = window.setTimeout(() => setQuery(rawQuery), 200);
@@ -112,11 +117,26 @@ export function AccountManager() {
   useEffect(() => { const timer = window.setInterval(() => setNow(Date.now()), 30_000); return () => window.clearInterval(timer); }, []);
 
   async function connect(provider: "gmail" | "microsoft") {
+    if (connecting) return;
+    setConnecting(provider);
     setError("");
     try {
       const result = await api<{ authorization_url: string }>(`/v1/providers/${provider}/authorize`, { method: "POST" });
       window.location.assign(result.authorization_url);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "No se pudo iniciar la conexión."); }
+    finally { setConnecting(null); }
+  }
+  async function connectImap() {
+    if (!imapEmail.trim() || imapPassword.replace(/\s/g, "").length < 16) {
+      setError("Introduce el correo y la contraseña de aplicación de 16 caracteres."); return;
+    }
+    setImapSaving(true); setError("");
+    try {
+      await api("/v1/providers/gmail/imap", { method: "POST", body: JSON.stringify({ email: imapEmail.trim(), app_password: imapPassword }) });
+      setImapOpen(false); setImapEmail(""); setImapPassword("");
+      await queryClient.invalidateQueries({ queryKey: ["accounts"] });
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "No se pudo conectar Gmail."); }
+    finally { setImapSaving(false); }
   }
   async function syncAccount(account: MailAccount) {
     const raw = rawById.get(account.id); if (!raw) return;
@@ -134,6 +154,20 @@ export function AccountManager() {
       window.location.assign(result.authorization_url);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "No se pudo reautorizar la cuenta."); }
   }
+  async function changePause(targets: MailAccount[], pause: boolean) {
+    if (!canManage || targets.length === 0) return;
+    setError("");
+    try {
+      await Promise.all(targets.map((account) => api(
+        `/v1/mail/accounts/${account.id}/${pause ? "pause" : "resume"}`,
+        { method: "POST" },
+      )));
+      setSelected(new Set());
+      await queryClient.invalidateQueries({ queryKey: ["accounts"] });
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "No se pudo cambiar la pausa de la cuenta.");
+    }
+  }
   async function runSync(targets = accounts.filter((account) => account.status === "conectada")) {
     if (!canManage || syncing) return;
     setSyncing(true); setError("");
@@ -142,6 +176,7 @@ export function AccountManager() {
   }
   function logout() { clearSession(); queryClient.clear(); navigate("/login", { replace: true }); }
   const selectedAccounts = visible.filter((account) => selected.has(account.id));
+  const selectedArePaused = selectedAccounts.length > 0 && selectedAccounts.every((account) => account.status === "pausada");
 
   return (
     <main className="sleek-mail clear-accounts fixed inset-0 z-[70] flex h-[100dvh] min-w-0 overflow-hidden bg-background text-foreground">
@@ -150,7 +185,7 @@ export function AccountManager() {
         <header className="accounts-command-bar grid shrink-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-4 border-b border-border bg-card px-4 py-4 lg:px-6">
           <div className="flex items-center gap-2"><Sheet><SheetTrigger asChild><button type="button" aria-label="Abrir navegación" className="grid size-9 place-items-center rounded-lg border border-border text-muted-foreground hover:text-foreground lg:hidden"><PanelLeft className="size-4" /></button></SheetTrigger><SheetContent side="left" className="w-64 border-sidebar-border bg-sidebar p-0"><SheetTitle className="sr-only">Navegación</SheetTitle><AppSidebar className="w-full border-r-0" /></SheetContent></Sheet><span className="hidden min-w-0 lg:block"><span className="block text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Workspace</span><span className="block truncate text-[13px] font-semibold">Cuentas</span></span></div>
           <div className="relative min-w-0"><Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" /><input value={rawQuery} onChange={(event) => { setRawQuery(event.target.value); setPageSize(PAGE_SIZE); }} placeholder="Buscar por correo, cliente, proveedor, dominio, estado o etiqueta…" aria-label="Buscar cuentas" className="h-9 w-full rounded-xl border border-border bg-surface-2 pl-9 pr-9 text-[12.5px] text-foreground placeholder:text-muted-foreground/75 focus:border-primary/40 focus:outline-none focus:ring-2 focus:ring-ring/25" />{rawQuery && <button type="button" onClick={() => setRawQuery("")} aria-label="Limpiar búsqueda" className="absolute right-2 top-1/2 grid size-6 -translate-y-1/2 place-items-center rounded-md text-muted-foreground hover:bg-surface-3 hover:text-foreground"><X className="size-3.5" /></button>}</div>
-          <div className="flex items-center gap-1.5"><button type="button" onClick={() => runSync()} disabled={!canManage || syncing} className="flex h-9 items-center gap-2 rounded-xl border border-border bg-surface-2 px-2.5 text-[12.5px] text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground disabled:opacity-50"><RefreshCw className={cn("size-3.5", syncing && "animate-spin text-primary")} /><span className="hidden sm:inline">{syncing ? "Sincronizando" : "Sincronizar"}</span></button><button type="button" aria-label="Alertas" className="hidden size-9 place-items-center rounded-xl border border-border text-muted-foreground hover:text-foreground sm:grid"><Bell className="size-4" /></button>{canManage && <DropdownMenu><DropdownMenuTrigger asChild><Button className="h-9 gap-1.5 rounded-xl px-3 text-[12.5px] font-semibold shadow-[0_10px_30px_-14px_var(--primary)]"><Plus className="size-4" /><span className="hidden sm:inline">Agregar cuenta</span></Button></DropdownMenuTrigger><DropdownMenuContent align="end" className="w-48"><DropdownMenuItem onSelect={() => connect("gmail")}>Conectar Gmail</DropdownMenuItem><DropdownMenuItem onSelect={() => connect("microsoft")}>Conectar Microsoft</DropdownMenuItem></DropdownMenuContent></DropdownMenu>}<button type="button" onClick={logout} aria-label="Salir" className="hidden size-9 place-items-center rounded-xl border border-border text-muted-foreground hover:text-foreground xl:grid"><LogOut className="size-4" /></button></div>
+          <div className="flex items-center gap-1.5"><button type="button" onClick={() => runSync()} disabled={!canManage || syncing} className="flex h-9 items-center gap-2 rounded-xl border border-border bg-surface-2 px-2.5 text-[12.5px] text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground disabled:opacity-50"><RefreshCw className={cn("size-3.5", syncing && "animate-spin text-primary")} /><span className="hidden sm:inline">{syncing ? "Sincronizando" : "Sincronizar"}</span></button><button type="button" aria-label="Alertas" className="hidden size-9 place-items-center rounded-xl border border-border text-muted-foreground hover:text-foreground sm:grid"><Bell className="size-4" /></button>{canManage && <DropdownMenu><DropdownMenuTrigger asChild><Button className="h-9 gap-1.5 rounded-xl px-3 text-[12.5px] font-semibold shadow-[0_10px_30px_-14px_var(--primary)]"><Plus className="size-4" /><span className="hidden sm:inline">Agregar cuenta</span></Button></DropdownMenuTrigger><DropdownMenuContent align="end" className="w-64"><DropdownMenuItem disabled={connecting !== null} onSelect={() => void connect("gmail")}>{connecting === "gmail" ? "Abriendo Google…" : "Gmail · Continuar con Google"}</DropdownMenuItem><DropdownMenuItem onSelect={() => setImapOpen(true)}>Gmail · contraseña de aplicación</DropdownMenuItem><DropdownMenuItem onSelect={() => connect("microsoft")}>Conectar Microsoft</DropdownMenuItem></DropdownMenuContent></DropdownMenu>}<button type="button" onClick={logout} aria-label="Salir" className="hidden size-9 place-items-center rounded-xl border border-border text-muted-foreground hover:text-foreground xl:grid"><LogOut className="size-4" /></button></div>
         </header>
         <div className="scroll-slim min-w-0 flex-1 overflow-y-auto p-4 lg:p-6">
           <div className="mx-auto flex min-w-0 max-w-[1600px] flex-col gap-5">
@@ -159,14 +194,15 @@ export function AccountManager() {
             {params.has("oauth_error") && <div role="alert" className="rounded-xl border border-warning/30 bg-warning/10 px-3 py-2 text-[12px]">La conexión no se completó. Reintenta la autorización de la cuenta.</div>}
             {error && <div role="alert" className="rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-2 text-[12px] text-destructive">{error}</div>}
             <div className="scroll-slim flex min-w-0 items-center gap-1.5 overflow-x-auto pb-0.5">{providersPresent.map((provider) => <Chip key={provider} active={providerFilter.has(provider)} onClick={() => { toggleProvider(provider); setPageSize(PAGE_SIZE); }} label={providerLabels[provider]} />)}<span className="mx-1 h-5 w-px shrink-0 bg-border" />{statusChips.map((status) => <Chip key={status.id} active={statusFilter.has(status.id)} onClick={() => { toggleStatus(status.id); setPageSize(PAGE_SIZE); }} label={status.label} tone={status.id === "error" || status.id === "atencion" ? "danger" : undefined} />)}{activeFilters > 0 && <button type="button" onClick={() => { setProviderFilter(new Set()); setStatusFilter(new Set()); }} className="ml-1 flex h-7 shrink-0 items-center gap-1 rounded-full px-2 text-[11.5px] text-muted-foreground hover:text-foreground"><X className="size-3" />Limpiar ({activeFilters})</button>}</div>
-            {selected.size > 0 && <div className="scroll-slim flex items-center gap-1.5 overflow-x-auto rounded-xl border border-primary/25 bg-primary/[0.07] px-2.5 py-1.5"><span className="shrink-0 rounded bg-primary/15 px-1.5 py-0.5 text-[11px] font-semibold text-primary">{selected.size}</span><BulkBtn icon={RefreshCw} label="Sincronizar" onClick={() => runSync(selectedAccounts)} disabled={!canManage} /><BulkBtn icon={ShieldAlert} label="Reautorizar" onClick={() => selectedAccounts[0] && reauthorize(selectedAccounts[0])} disabled={!canManage || selectedAccounts.length !== 1} /><BulkBtn icon={Pause} label="Pausar" disabled /><BulkBtn icon={Users} label="Asignar cliente" disabled /><BulkBtn icon={Mail} label="Ver bandeja" disabled={selectedAccounts.length !== 1} onClick={() => selectedAccounts[0] && navigate(`/correos?account_id=${encodeURIComponent(selectedAccounts[0].id)}`)} /><BulkBtn icon={AlertTriangle} label="Desconectar" tone="danger" disabled /><button type="button" onClick={() => setSelected(new Set())} aria-label="Cancelar selección" className="ml-auto grid size-7 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-surface-3 hover:text-foreground"><X className="size-3.5" /></button></div>}
-            <AccountsTable accounts={visible} stats={stats} selected={selected} onToggle={toggle} onToggleAll={toggleAll} sortKey={sortKey} sortDir={sortDir} onSort={(key) => { if (key === sortKey) setSortDir((direction) => direction === "asc" ? "desc" : "asc"); else { setSortKey(key); setSortDir("asc"); } }} density={density} canManage={canManage} actions={{ sync: syncAccount, inbox: (account) => navigate(`/correos?account_id=${encodeURIComponent(account.id)}`), reauthorize }} />
+            {selected.size > 0 && <div className="scroll-slim flex items-center gap-1.5 overflow-x-auto rounded-xl border border-primary/25 bg-primary/[0.07] px-2.5 py-1.5"><span className="shrink-0 rounded bg-primary/15 px-1.5 py-0.5 text-[11px] font-semibold text-primary">{selected.size}</span><BulkBtn icon={RefreshCw} label="Sincronizar" onClick={() => runSync(selectedAccounts)} disabled={!canManage || selectedArePaused} /><BulkBtn icon={ShieldAlert} label="Reautorizar" onClick={() => selectedAccounts[0] && reauthorize(selectedAccounts[0])} disabled={!canManage || selectedAccounts.length !== 1} /><BulkBtn icon={Pause} label={selectedArePaused ? "Reanudar" : "Pausar"} onClick={() => void changePause(selectedAccounts, !selectedArePaused)} disabled={!canManage} /><BulkBtn icon={Users} label="Asignar cliente" disabled /><BulkBtn icon={Mail} label="Ver bandeja" disabled={selectedAccounts.length !== 1} onClick={() => selectedAccounts[0] && navigate(`/correos?account_id=${encodeURIComponent(selectedAccounts[0].id)}`)} /><BulkBtn icon={AlertTriangle} label="Desconectar" tone="danger" disabled /><button type="button" onClick={() => setSelected(new Set())} aria-label="Cancelar selección" className="ml-auto grid size-7 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-surface-3 hover:text-foreground"><X className="size-3.5" /></button></div>}
+            <AccountsTable accounts={visible} stats={stats} selected={selected} onToggle={toggle} onToggleAll={toggleAll} sortKey={sortKey} sortDir={sortDir} onSort={(key) => { if (key === sortKey) setSortDir((direction) => direction === "asc" ? "desc" : "asc"); else { setSortKey(key); setSortDir("asc"); } }} density={density} canManage={canManage} actions={{ sync: syncAccount, inbox: (account) => navigate(`/correos?account_id=${encodeURIComponent(account.id)}`), reauthorize, togglePause: (account) => void changePause([account], account.status !== "pausada") }} />
             {accountQuery.isLoading && <p className="py-8 text-center text-[12.5px] text-muted-foreground">Cargando cuentas…</p>}
             {accountQuery.isError && <button type="button" onClick={() => accountQuery.refetch()} className="rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-[12px] text-destructive">No se pudieron cargar las cuentas. Reintentar</button>}
             <div className="flex flex-wrap items-center justify-between gap-2 pb-4 text-[11.5px] text-muted-foreground"><span className="flex items-center gap-1.5"><Clock className="size-3.5" />Mostrando {visible.length.toLocaleString("es")} de {filtered.length.toLocaleString("es")} cuentas</span>{visible.length < filtered.length && <button type="button" onClick={() => setPageSize((size) => size + PAGE_SIZE)} className="rounded-lg border border-border bg-surface-2 px-3 py-1.5 text-[12px] text-foreground transition-colors hover:border-border-strong">Cargar más</button>}</div>
           </div>
         </div>
       </div>
+      {imapOpen && <div className="fixed inset-0 z-[100] grid place-items-center bg-slate-950/45 p-4 backdrop-blur-sm" onMouseDown={(event) => { if (event.target === event.currentTarget && !imapSaving) setImapOpen(false); }}><section role="dialog" aria-modal="true" aria-labelledby="imap-title" className="w-full max-w-lg rounded-3xl border border-border bg-card p-6 shadow-2xl"><div className="flex items-start justify-between gap-4"><div><p className="text-[10px] font-semibold uppercase tracking-[.18em] text-primary">Conexión sin OAuth</p><h2 id="imap-title" className="mt-1 text-xl font-bold">Conectar Gmail</h2><p className="mt-2 text-[12.5px] leading-5 text-muted-foreground">Usa una contraseña de aplicación de Google. Nunca introduzcas tu contraseña normal.</p></div><button type="button" onClick={() => setImapOpen(false)} disabled={imapSaving} className="grid size-9 place-items-center rounded-full border border-border"><X className="size-4" /></button></div><label className="mt-5 block text-[12px] font-semibold">Correo Gmail<input type="email" autoComplete="email" value={imapEmail} onChange={(event) => setImapEmail(event.target.value)} placeholder="cuenta@gmail.com" className="mt-2 h-11 w-full rounded-xl border border-border bg-surface-2 px-3 font-normal outline-none focus:ring-2 focus:ring-ring/30" /></label><label className="mt-4 block text-[12px] font-semibold">Contraseña de aplicación<input type="password" autoComplete="new-password" value={imapPassword} onChange={(event) => setImapPassword(event.target.value)} placeholder="abcd efgh ijkl mnop" className="mt-2 h-11 w-full rounded-xl border border-border bg-surface-2 px-3 font-mono font-normal tracking-wider outline-none focus:ring-2 focus:ring-ring/30" /></label><div className="mt-3 rounded-xl border border-primary/20 bg-primary/[.06] p-3 text-[11.5px] leading-5 text-muted-foreground">Activa la verificación en dos pasos y genera la clave en <a className="font-semibold text-primary underline" href="https://myaccount.google.com/apppasswords" target="_blank" rel="noreferrer">Contraseñas de aplicaciones de Google</a>.</div><div className="mt-5 flex justify-end gap-2"><Button variant="ghost" onClick={() => setImapOpen(false)} disabled={imapSaving}>Cancelar</Button><Button onClick={() => void connectImap()} disabled={imapSaving}>{imapSaving ? "Comprobando…" : "Conectar y sincronizar"}</Button></div></section></div>}
     </main>
   );
 }

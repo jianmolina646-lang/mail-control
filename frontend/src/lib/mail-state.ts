@@ -27,6 +27,11 @@ export function mailFilters(raw: string, accountId: string | null, folder: Folde
     else if (key === "tiene" && value.startsWith("adj")) params.set("has_attachments", "true");
     else errors.push(`El filtro «${key}:${value}» no está disponible.`);
   }
+  for (const key of ["date_from", "date_to"]) {
+    const value = params.get(key);
+    if (value && (!Number.isFinite(Date.parse(value)) || new Date(value).toISOString().slice(0, 10) !== value)) errors.push("Selecciona una fecha válida.");
+  }
+  if (params.get("date_from") && params.get("date_to") && params.get("date_from")! > params.get("date_to")!) errors.push("La fecha inicial no puede ser posterior a la final.");
   if (folder === "no-leidos") params.set("is_read", "false");
   else if (folder === "destacados") params.set("is_starred", "true");
   else if (folder === "criticos") params.set("risk_level", "high,critical");
@@ -35,7 +40,8 @@ export function mailFilters(raw: string, accountId: string | null, folder: Folde
 }
 
 export function syncAge(timestamp: string | null, now = Date.now()) {
-  if (!timestamp || !Number.isFinite(Date.parse(timestamp))) return { stale: true, label: "Sin sincronización registrada" };
+  if (!timestamp) return { stale: false, label: "Sin sincronización registrada" };
+  if (!Number.isFinite(Date.parse(timestamp))) return { stale: true, label: "Fecha de sincronización no válida" };
   const seconds = Math.max(0, Math.floor((now - Date.parse(timestamp)) / 1000));
   const days = Math.floor(seconds / 86400);
   const hours = Math.floor((seconds % 86400) / 3600);
@@ -54,7 +60,10 @@ export function mapAccount(account: Account, now = Date.now()): MailAccount {
   const provider = providerFor(account);
   const sync = syncAge(account.last_synced_at, now);
   const status: SyncStatus = ({ connected: "conectada", syncing: "sincronizando", error: "error", reauth_required: "requiere-autorizacion", disconnected: "pausada" } as const)[account.status];
-  return { id: account.id, alias: account.email.split("@")[0] || account.email, email: account.email, provider, client: "Sin asignar", platform: provider === "gmail" ? "Google Gmail" : "Microsoft Mail", group: "Cuentas conectadas", country: "—", labels: [], favorite: false, status, lastSync: sync.label, syncStale: sync.stale, messageCount: account.message_count, statusDetail: account.last_error ?? (sync.stale ? "Sincronización pendiente de actualizar." : undefined) };
+  const syncPending = !account.last_synced_at && !account.last_error && (account.status === "connected" || account.status === "syncing");
+  const syncStale = sync.stale || (!account.last_synced_at && !!account.last_error);
+  const statusDetail = account.last_error ?? (syncPending ? "Aún no se ha completado la primera sincronización de esta cuenta." : syncStale ? "Sincronización pendiente de actualizar." : undefined);
+  return { id: account.id, alias: account.email.split("@")[0] || account.email, email: account.email, provider, client: "Sin asignar", platform: provider === "gmail" ? "Google Gmail" : "Microsoft Mail", group: "Cuentas conectadas", country: "—", labels: [], favorite: false, status, lastSync: sync.label, syncStale, syncPending, messageCount: account.message_count, statusDetail };
 }
 
 export function categoryFor(value: string | null): FolderId[] {

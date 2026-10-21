@@ -63,12 +63,13 @@ export function MessageRow({
   return (
     <div
       role="button"
+      aria-current={selected ? "true" : undefined}
       style={{ "--mail-row-index": Math.min(animationIndex, 14) } as CSSProperties}
       tabIndex={0}
       onClick={onOpen}
       onMouseEnter={onPrefetch}
       onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
+        if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) {
           e.preventDefault();
           onOpen();
         }
@@ -104,10 +105,10 @@ export function MessageRow({
         <Star className={cn("size-3.5", message.starred && "fill-warning text-warning")} />
       </button>
 
-      <div className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-0.5 md:grid-cols-[minmax(140px,0.8fr)_minmax(0,2.4fr)_auto] md:items-center md:gap-x-5">
-        <div className="col-start-1 row-start-1 flex min-w-0 items-center gap-2">
+      <div className="mail-row-content min-w-0 flex-1">
+        <div className="mail-row-sender flex min-w-0 items-center gap-2">
           {account && <ProviderIcon provider={account.provider} className="size-4 shrink-0" />}
-          <span className={cn("truncate text-[13px]", unread ? "font-semibold text-foreground" : "text-foreground/75")}>
+          <span title={message.sender} className={cn("truncate text-[13px]", unread ? "font-semibold text-foreground" : "text-foreground/75")}>
             {message.senderName}
           </span>
           {threadCount > 1 && (
@@ -117,20 +118,22 @@ export function MessageRow({
           )}
         </div>
 
-        <div className="col-span-2 col-start-1 row-start-2 flex min-w-0 items-baseline gap-1 md:col-span-1 md:col-start-2 md:row-start-1">
-          <span className={cn("shrink-0 truncate text-[13px] md:max-w-[45%]", unread ? "font-semibold text-foreground" : "text-foreground/85")}>
+        <div className="mail-row-description min-w-0">
+          <span title={message.subject} className={cn("mail-row-subject", unread ? "font-semibold text-foreground" : "text-foreground/85")}>
             {message.subject}
           </span>
-          <span className="min-w-0 flex-1 truncate text-[12.5px] text-muted-foreground">
-            <span aria-hidden>— </span>{message.preview}
+          <span className="mail-row-preview text-muted-foreground">
+            {message.preview}
           </span>
+          <div className="mail-row-tags">
           {message.attachments.length > 0 && <Paperclip className="size-3.5 shrink-0 text-muted-foreground" aria-label="Tiene adjuntos" />}
           {message.critical && <span className="hidden shrink-0 rounded bg-destructive/12 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-destructive lg:inline">Crítico</span>}
           {!message.critical && message.categories.length > 0 && <span className="hidden shrink-0 rounded bg-surface-3 px-1.5 py-0.5 text-[9px] text-muted-foreground xl:inline">{categoryOf(message)}</span>}
+          </div>
         </div>
 
-        <div className="col-start-2 row-start-1 flex shrink-0 items-center gap-1 md:col-start-3">
-        <div className="hidden items-center rounded-md bg-card shadow-sm ring-1 ring-border group-hover:flex group-focus-within:flex">
+        <div className="mail-row-date flex shrink-0 items-center gap-1">
+        <div className="mail-row-actions hidden items-center rounded-md bg-card shadow-sm ring-1 ring-border group-hover:flex group-focus-within:flex">
           <QuickAction icon={unread ? MailOpen : Mail} label={unread ? "Marcar como leído" : "Marcar como no leído"} onClick={onToggleRead} />
           <QuickAction icon={Archive} label="Archivar" onClick={onArchive} />
           <QuickAction icon={Trash2} label="Eliminar" onClick={onDelete} />

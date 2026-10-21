@@ -1,6 +1,8 @@
 name: production-drift
 
 on:
+  push:
+    branches: [main]
   schedule:
     - cron: "17 * * * *"
   workflow_dispatch:
@@ -48,6 +50,7 @@ jobs:
                   and not path.name.startswith(".")
                   and ".backup-" not in path.name
                   and ".pre-" not in path.name
+                  and ".before-" not in path.name
                   and path.suffix != ".pyc"
               )
 

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 from typing import Annotated, Literal
 from urllib.parse import quote
 from uuid import UUID
 
+import aio_pika
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy import and_, func, or_, select
@@ -39,7 +41,12 @@ from mail_control.modules.mail.content_service import (
     detected_image_type,
 )
 from mail_control.modules.mail.image_proxy import ImageProxyError, fetch_image, image_sources
-from mail_control.modules.mail.models import EmailMessage, MailAccount
+from mail_control.modules.mail.models import (
+    AccountStatus,
+    EmailMessage,
+    MailAccount,
+    MailProvider,
+)
 from mail_control.settings import get_settings
 
 router = APIRouter(prefix="/v1", tags=["dashboard"])
@@ -88,6 +95,69 @@ async def accounts(
     session: DatabaseSession,
 ) -> list[AccountItem]:
     return await DashboardRepository(session, principal.claims.tenant_id).accounts()
+
+
+async def _managed_account(
+    account_id: UUID,
+    principal: Principal,
+    session: AsyncSession,
+) -> MailAccount:
+    account = await session.scalar(
+        select(MailAccount).where(
+            MailAccount.id == account_id,
+            MailAccount.tenant_id == principal.claims.tenant_id,
+        )
+    )
+    if account is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "mail account not found")
+    return account
+
+
+@router.post("/mail/accounts/{account_id}/pause")
+async def pause_account(
+    account_id: UUID,
+    principal: OperatorPrincipal,
+    session: DatabaseSession,
+) -> dict[str, str]:
+    account = await _managed_account(account_id, principal, session)
+    account.status = AccountStatus.DISCONNECTED
+    account.last_error = None
+    await session.commit()
+    return {"status": "paused"}
+
+
+@router.post("/mail/accounts/{account_id}/resume", status_code=status.HTTP_202_ACCEPTED)
+async def resume_account(
+    account_id: UUID,
+    request: Request,
+    principal: OperatorPrincipal,
+    session: DatabaseSession,
+) -> dict[str, str]:
+    account = await _managed_account(account_id, principal, session)
+    account.status = AccountStatus.CONNECTED
+    account.last_error = None
+    await session.commit()
+
+    routing_key = (
+        "mail.sync.gmail"
+        if account.provider is MailProvider.GMAIL
+        else "mail.sync.microsoft"
+    )
+    channel = await request.app.state.resources.rabbitmq.channel()
+    try:
+        await channel.default_exchange.publish(
+            aio_pika.Message(
+                body=json.dumps({
+                    "tenant_id": str(account.tenant_id),
+                    "mail_account_id": str(account.id),
+                }).encode("utf-8"),
+                delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
+            ),
+            routing_key=routing_key,
+        )
+    finally:
+        await channel.close()
+    return {"status": "queued"}
 
 
 @router.get("/mail/messages", response_model=MessagePage)

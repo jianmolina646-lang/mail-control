@@ -4,6 +4,7 @@ import asyncio
 import base64
 import hashlib
 import json
+import math
 import random
 import secrets
 from collections.abc import Awaitable, Callable
@@ -45,6 +46,33 @@ class MicrosoftDeltaExpired(MicrosoftError):
 
 class MicrosoftTransientError(MicrosoftError):
     """Microsoft Graph stayed unavailable after bounded automatic retries."""
+
+    def __init__(self, message: str, *, retry_at: datetime | None = None) -> None:
+        super().__init__(message)
+        self.retry_at = retry_at
+
+
+def microsoft_retry_at(response: httpx.Response) -> datetime | None:
+    """Preserve Retry-After as an absolute deadline across worker deliveries."""
+    value = response.headers.get("Retry-After")
+    if not value:
+        return None
+    try:
+        seconds = float(value)
+    except ValueError:
+        try:
+            deadline = cast(datetime, parsedate_to_datetime(value))
+            if deadline.tzinfo is None:
+                deadline = deadline.replace(tzinfo=UTC)
+            return deadline.astimezone(UTC)
+        except (TypeError, ValueError, OverflowError):
+            return None
+    if not math.isfinite(seconds) or seconds < 0:
+        return None
+    try:
+        return datetime.now(UTC) + timedelta(seconds=seconds)
+    except OverflowError:
+        return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,12 +183,24 @@ class MicrosoftOAuth:
         )
 
     async def _token(self, data: dict[str, str]) -> MicrosoftTokens:
-        async with httpx.AsyncClient(timeout=20) as client:
-            response = await client.post(MICROSOFT_TOKEN_URL, data=data)
+        try:
+            async with httpx.AsyncClient(timeout=20) as client:
+                response = await client.post(MICROSOFT_TOKEN_URL, data=data)
+        except httpx.RequestError as error:
+            raise MicrosoftTransientError(
+                f"Microsoft OAuth is temporarily unavailable ({type(error).__name__})"
+            ) from error
+        if response.status_code in GRAPH_TRANSIENT_STATUS_CODES:
+            raise MicrosoftTransientError(
+                f"Microsoft OAuth is temporarily unavailable (HTTP {response.status_code})",
+                retry_at=microsoft_retry_at(response),
+            )
         if response.is_error:
             try:
                 error_payload = response.json()
             except ValueError:
+                error_payload = {}
+            if not isinstance(error_payload, dict):
                 error_payload = {}
             error_name = str(error_payload.get("error", "oauth_error"))
             error_codes = error_payload.get("error_codes", [])
@@ -350,6 +390,7 @@ class MicrosoftGraphClient:
         if parsed.netloc and (parsed.scheme != "https" or parsed.netloc != "graph.microsoft.com"):
             raise MicrosoftError("Refusing a Graph continuation outside the provider origin")
         last_error: Exception | None = None
+        retry_at: datetime | None = None
         refreshed = False
         async with httpx.AsyncClient(
             base_url=GRAPH_URL,
@@ -365,9 +406,6 @@ class MicrosoftGraphClient:
                         json=json_data,
                         headers=self.headers,
                     )
-                except httpx.RequestError as error:
-                    last_error = error
-                else:
                     if response.status_code == 401 and self._refresh_access_token and not refreshed:
                         token = await self._refresh_access_token(
                             self.headers["Authorization"].removeprefix("Bearer ")
@@ -382,6 +420,10 @@ class MicrosoftGraphClient:
                             json=json_data,
                             headers=self.headers,
                         )
+                except httpx.RequestError as error:
+                    last_error = error
+                    retry_at = None
+                else:
                     if response.status_code not in GRAPH_TRANSIENT_STATUS_CODES:
                         response.raise_for_status()
                         if not response.content:
@@ -392,6 +434,7 @@ class MicrosoftGraphClient:
                         request=response.request,
                         response=response,
                     )
+                    retry_at = microsoft_retry_at(response)
 
                 if attempt + 1 == GRAPH_MAX_ATTEMPTS:
                     break
@@ -401,12 +444,14 @@ class MicrosoftGraphClient:
                 delay = self._retry_delay(retry_after, attempt)
                 if delay > GRAPH_MAX_RETRY_DELAY_SECONDS:
                     raise MicrosoftTransientError(
-                        "Microsoft Graph requested a longer retry cooldown"
+                        "Microsoft Graph requested a longer retry cooldown",
+                        retry_at=retry_at,
                     ) from last_error
                 await asyncio.sleep(delay)
 
         raise MicrosoftTransientError(
-            f"Microsoft Graph remained unavailable after {GRAPH_MAX_ATTEMPTS} attempts"
+            f"Microsoft Graph remained unavailable after {GRAPH_MAX_ATTEMPTS} attempts",
+            retry_at=retry_at,
         ) from last_error
 
     @staticmethod
@@ -423,7 +468,7 @@ class MicrosoftGraphClient:
                     delay = (retry_at - datetime.now(UTC)).total_seconds()
                 except (TypeError, ValueError, OverflowError):
                     delay = None
-            if delay is not None:
+            if delay is not None and math.isfinite(delay):
                 return max(delay, 0.0)
         ceiling = min(2**attempt, GRAPH_MAX_RETRY_DELAY_SECONDS)
         return random.uniform(0.0, ceiling)

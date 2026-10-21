@@ -18,6 +18,7 @@ export interface AccountActions {
   sync: (account: MailAccount) => void;
   inbox: (account: MailAccount) => void;
   reauthorize: (account: MailAccount) => void;
+  togglePause: (account: MailAccount) => void;
 }
 
 interface AccountsTableProps {
@@ -100,5 +101,5 @@ function SortHead({ label, k, sortKey, dir, onSort, align, className }: { label:
 }
 
 function RowMenu({ account, actions, canManage }: { account: MailAccount; actions: AccountActions; canManage: boolean }) {
-  return <DropdownMenu><DropdownMenuTrigger asChild><button type="button" aria-label={`Acciones de ${account.alias}`} className="grid size-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-surface-3 hover:text-foreground"><MoreHorizontal className="size-4" /></button></DropdownMenuTrigger><DropdownMenuContent align="end" className="w-52"><DropdownMenuItem disabled={!canManage} onSelect={() => actions.sync(account)}>Sincronizar ahora</DropdownMenuItem><DropdownMenuItem onSelect={() => actions.inbox(account)}>Ver bandeja de la cuenta</DropdownMenuItem><DropdownMenuItem disabled={!canManage} onSelect={() => actions.reauthorize(account)}>Reautorizar acceso</DropdownMenuItem><DropdownMenuSeparator /><DropdownMenuItem disabled>Editar alias y etiquetas</DropdownMenuItem><DropdownMenuItem disabled>Asignar cliente o grupo</DropdownMenuItem><DropdownMenuItem disabled>{account.status === "pausada" ? "Reanudar" : "Pausar"} sincronización</DropdownMenuItem><DropdownMenuSeparator /><DropdownMenuItem disabled className="text-destructive focus:text-destructive">Desconectar cuenta</DropdownMenuItem></DropdownMenuContent></DropdownMenu>;
+  return <DropdownMenu><DropdownMenuTrigger asChild><button type="button" aria-label={`Acciones de ${account.alias}`} className="grid size-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-surface-3 hover:text-foreground"><MoreHorizontal className="size-4" /></button></DropdownMenuTrigger><DropdownMenuContent align="end" className="w-52"><DropdownMenuItem disabled={!canManage || account.status === "pausada"} onSelect={() => actions.sync(account)}>Sincronizar ahora</DropdownMenuItem><DropdownMenuItem onSelect={() => actions.inbox(account)}>Ver bandeja de la cuenta</DropdownMenuItem><DropdownMenuItem disabled={!canManage} onSelect={() => actions.reauthorize(account)}>Reautorizar acceso</DropdownMenuItem><DropdownMenuSeparator /><DropdownMenuItem disabled>Editar alias y etiquetas</DropdownMenuItem><DropdownMenuItem disabled>Asignar cliente o grupo</DropdownMenuItem><DropdownMenuItem disabled={!canManage} onSelect={() => actions.togglePause(account)}>{account.status === "pausada" ? "Reanudar" : "Pausar"} sincronización</DropdownMenuItem><DropdownMenuSeparator /><DropdownMenuItem disabled className="text-destructive focus:text-destructive">Desconectar cuenta</DropdownMenuItem></DropdownMenuContent></DropdownMenu>;
 }

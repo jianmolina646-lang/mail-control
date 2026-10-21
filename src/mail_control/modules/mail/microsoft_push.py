@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_object_session
 
 from mail_control.infrastructure.resources import Resources
+from mail_control.modules.mail.auth_state import AccountAuthorizationChanged, mark_reauth_if_current
 from mail_control.modules.mail.microsoft import (
     MicrosoftError,
     MicrosoftGraphClient,
@@ -274,9 +275,11 @@ async def renew_due_microsoft_graph_subscriptions(
                 )
                 session.add(state)
                 renewed += 1
+            except AccountAuthorizationChanged:
+                continue
             except MicrosoftReauthorizationRequired as error:
-                account.status = AccountStatus.REAUTH_REQUIRED
-                account.last_error = str(error)
+                if not await mark_reauth_if_current(session, account, error):
+                    continue
                 if state is not None:
                     state.status = "reauth_required"
                     state.last_error = str(error)

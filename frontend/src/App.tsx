@@ -382,5 +382,40 @@ export default function App() {
       events.forEach((event) => window.removeEventListener(event, recordActivity));
     };
   }, [authenticated, queryClient]);
-  return <Routes><Route path="/login" element={authenticated ? <Navigate to="/" replace /> : <LoginManager />} /><Route path="/*" element={authenticated ? <Shell /> : <Navigate to="/login" replace />} /></Routes>;
+  return <Routes><Route path="/oauth-info" element={<PublicLegalPage kind="home" />} /><Route path="/privacy" element={<PublicLegalPage kind="privacy" />} /><Route path="/terms" element={<PublicLegalPage kind="terms" />} /><Route path="/login" element={authenticated ? <Navigate to="/" replace /> : <LoginManager />} /><Route path="/*" element={authenticated ? <Shell /> : <Navigate to="/login" replace />} /></Routes>;
+}
+
+function PublicLegalPage({ kind }: { kind: "home" | "privacy" | "terms" }) {
+  const updated = "10 de octubre de 2026";
+  return <main className="min-h-screen bg-[#f6f8fc] px-5 py-10 text-[#172033] sm:px-8">
+    <article className="mx-auto max-w-4xl overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+      <header className="border-b border-slate-200 bg-gradient-to-r from-emerald-50 via-white to-sky-50 px-6 py-7 sm:px-10">
+        <a href="/oauth-info" className="inline-flex items-center gap-3 font-bold text-slate-900"><span className="grid size-10 place-items-center rounded-xl bg-emerald-500 text-lg text-white">J</span>Jheliz Mail Control</a>
+        <nav className="mt-5 flex flex-wrap gap-2 text-sm"><a className="rounded-full border border-slate-200 bg-white px-4 py-2 hover:border-emerald-400" href="/oauth-info">Información</a><a className="rounded-full border border-slate-200 bg-white px-4 py-2 hover:border-emerald-400" href="/privacy">Privacidad</a><a className="rounded-full border border-slate-200 bg-white px-4 py-2 hover:border-emerald-400" href="/terms">Términos</a><a className="rounded-full bg-slate-900 px-4 py-2 text-white" href="/login">Acceso al panel</a></nav>
+      </header>
+      <div className="space-y-7 px-6 py-9 leading-7 text-slate-700 sm:px-10 sm:py-12">
+        {kind === "home" && <>
+          <div><p className="text-sm font-semibold uppercase tracking-[.18em] text-emerald-600">Aplicación de productividad</p><h1 className="mt-2 text-3xl font-bold tracking-tight text-slate-950 sm:text-5xl">Correo operativo, organizado y seguro</h1><p className="mt-4 max-w-3xl text-lg text-slate-600">Jheliz Mail Control permite a usuarios autorizados conectar sus cuentas, consultar mensajes, buscar información y organizar alertas desde una bandeja centralizada.</p></div>
+          <section><h2 className="text-xl font-bold text-slate-900">Uso de Google Gmail</h2><p className="mt-2">La conexión con Google se realiza mediante OAuth 2.0. La aplicación solicita acceso de solo lectura para mostrar y organizar los correos que el propio usuario decide conectar. No envía, modifica ni elimina mensajes dentro de Gmail.</p></section>
+          <section><h2 className="text-xl font-bold text-slate-900">Control del usuario</h2><p className="mt-2">El usuario puede desconectar una cuenta desde el panel, revocar el permiso desde su Cuenta de Google y solicitar la eliminación de sus datos escribiendo a <a className="font-semibold text-emerald-700 underline" href="mailto:barenkaren02@gmail.com">barenkaren02@gmail.com</a>.</p></section>
+        </>}
+        {kind === "privacy" && <>
+          <div><p className="text-sm font-semibold uppercase tracking-[.18em] text-emerald-600">Última actualización: {updated}</p><h1 className="mt-2 text-3xl font-bold text-slate-950 sm:text-4xl">Política de privacidad</h1></div>
+          <section><h2 className="text-xl font-bold text-slate-900">Datos que tratamos</h2><p className="mt-2">Cuando autorizas una cuenta de Google, procesamos la dirección de correo, identificadores de cuenta, metadatos y contenido de los mensajes necesarios para ofrecer la bandeja, búsqueda, clasificación y alertas. También conservamos información técnica y de seguridad de la sesión.</p></section>
+          <section><h2 className="text-xl font-bold text-slate-900">Cómo utilizamos los datos</h2><p className="mt-2">Los datos se usan únicamente para prestar las funciones solicitadas, mantener la sincronización, proteger el servicio y resolver incidencias. No vendemos datos personales ni utilizamos el contenido de Gmail para publicidad.</p></section>
+          <section><h2 className="text-xl font-bold text-slate-900">Datos de Google</h2><p className="mt-2">El uso y transferencia a otras aplicaciones de la información recibida de las API de Google cumple la <a className="font-semibold text-emerald-700 underline" href="https://developers.google.com/terms/api-services-user-data-policy" target="_blank" rel="noreferrer">Política de Datos de Usuario de los Servicios API de Google</a>, incluidos los requisitos de Uso Limitado.</p></section>
+          <section><h2 className="text-xl font-bold text-slate-900">Conservación, seguridad y eliminación</h2><p className="mt-2">Aplicamos controles de acceso y protección de credenciales. Conservamos la información mientras la cuenta permanezca conectada o sea necesaria para prestar el servicio. Puedes revocar el acceso en Google y solicitar la eliminación de la cuenta y sus datos asociados.</p></section>
+          <section><h2 className="text-xl font-bold text-slate-900">Contacto</h2><p className="mt-2">Para consultas de privacidad o solicitudes de eliminación: <a className="font-semibold text-emerald-700 underline" href="mailto:barenkaren02@gmail.com">barenkaren02@gmail.com</a>.</p></section>
+        </>}
+        {kind === "terms" && <>
+          <div><p className="text-sm font-semibold uppercase tracking-[.18em] text-emerald-600">Última actualización: {updated}</p><h1 className="mt-2 text-3xl font-bold text-slate-950 sm:text-4xl">Condiciones del servicio</h1></div>
+          <section><h2 className="text-xl font-bold text-slate-900">Uso autorizado</h2><p className="mt-2">Jheliz Mail Control es una herramienta privada de productividad. Solo debes conectar cuentas propias o cuentas para las que tengas autorización expresa. Está prohibido usar el servicio para acceder a datos ajenos, infringir derechos o realizar actividades ilícitas.</p></section>
+          <section><h2 className="text-xl font-bold text-slate-900">Cuenta y seguridad</h2><p className="mt-2">Eres responsable de proteger tus credenciales, mantener actualizados tus datos y notificarnos cualquier acceso no autorizado. Podemos suspender accesos que representen un riesgo para usuarios o sistemas.</p></section>
+          <section><h2 className="text-xl font-bold text-slate-900">Disponibilidad y cambios</h2><p className="mt-2">Trabajamos para mantener el servicio disponible, aunque pueden producirse mantenimientos o interrupciones de proveedores externos. Las funciones y estas condiciones pueden actualizarse; los cambios relevantes se comunicarán por los canales disponibles.</p></section>
+          <section><h2 className="text-xl font-bold text-slate-900">Finalización</h2><p className="mt-2">Puedes dejar de usar el servicio, desconectar Google y solicitar la eliminación de tus datos. También podremos terminar el acceso por incumplimiento de estas condiciones.</p></section>
+          <section><h2 className="text-xl font-bold text-slate-900">Contacto</h2><p className="mt-2">Consultas sobre estas condiciones: <a className="font-semibold text-emerald-700 underline" href="mailto:barenkaren02@gmail.com">barenkaren02@gmail.com</a>.</p></section>
+        </>}
+      </div>
+    </article>
+  </main>;
 }

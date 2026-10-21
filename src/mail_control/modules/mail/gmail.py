@@ -4,10 +4,12 @@ import asyncio
 import base64
 import hashlib
 import json
+import re
 import secrets
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from email.utils import parsedate_to_datetime
 from typing import Any, cast
 from urllib.parse import quote, urlencode
 from uuid import UUID
@@ -51,6 +53,45 @@ class GmailMessageNotFound(GmailError):
 
 class GmailTransientError(GmailError):
     """Gmail stayed unavailable after bounded retries."""
+
+    def __init__(
+        self,
+        message: str = "Gmail provider is temporarily unavailable",
+        *,
+        retry_at: datetime | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.retry_at = retry_at
+
+
+def gmail_retry_at(response: httpx.Response) -> datetime | None:
+    """Preserve the later provider deadline from Retry-After and Gmail's JSON."""
+    deadlines: list[datetime] = []
+    retry_after = response.headers.get("Retry-After", "").strip()
+    if retry_after:
+        try:
+            if re.fullmatch(r"[0-9]+", retry_after):
+                deadline = datetime.now(UTC) + timedelta(seconds=int(retry_after))
+            else:
+                deadline = parsedate_to_datetime(retry_after)
+                if deadline.tzinfo is None:
+                    deadline = deadline.replace(tzinfo=UTC)
+            deadlines.append(deadline)
+        except (TypeError, ValueError, OverflowError):
+            pass
+    try:
+        message = str(response.json().get("error", {}).get("message", ""))
+    except (ValueError, AttributeError):
+        message = ""
+    match = re.search(r"Retry after (\d{4}-\d{2}-\d{2}T[^\s]+)", message)
+    if match:
+        try:
+            deadline = datetime.fromisoformat(match.group(1).replace("Z", "+00:00"))
+            if deadline.tzinfo is not None:
+                deadlines.append(deadline)
+        except ValueError:
+            pass
+    return max(deadlines) if deadlines else None
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,16 +199,22 @@ class GmailOAuth:
         )
 
     async def refresh_access_token(self, refresh_token: str) -> GoogleTokens:
-        async with httpx.AsyncClient(timeout=20) as client:
-            response = await client.post(
-                GOOGLE_TOKEN_URL,
-                data={
-                    "refresh_token": refresh_token,
-                    "client_id": self.client_id,
-                    "client_secret": self.client_secret,
-                    "grant_type": "refresh_token",
-                },
-            )
+        try:
+            async with httpx.AsyncClient(timeout=20) as client:
+                response = await client.post(
+                    GOOGLE_TOKEN_URL,
+                    data={
+                        "refresh_token": refresh_token,
+                        "client_id": self.client_id,
+                        "client_secret": self.client_secret,
+                        "grant_type": "refresh_token",
+                    },
+                )
+        except httpx.RequestError as error:
+            raise GmailTransientError(
+                f"Google token service temporarily unavailable ({type(error).__name__}); "
+                "automatic retry pending"
+            ) from error
         if response.is_error:
             raise self._token_error(response, "refresh token")
         data = response.json()
@@ -184,11 +231,24 @@ class GmailOAuth:
             payload = response.json()
         except ValueError:
             payload = {}
-        code = str(payload.get("error") or "oauth_error")
-        description = str(payload.get("error_description") or "")
-        message = f"Google rejected the {operation} ({code})"
-        if description:
-            message = f"{message}: {description[:240]}"
+        raw_code = payload.get("error") if isinstance(payload, dict) else None
+        known_codes = {
+            "invalid_request", "invalid_client", "invalid_grant", "unauthorized_client",
+            "unsupported_grant_type", "invalid_scope", "access_denied", "org_internal",
+            "admin_policy_enforced", "temporarily_unavailable", "server_error",
+        }
+        code = raw_code if isinstance(raw_code, str) and raw_code in known_codes else "oauth_error"
+        if response.status_code == 429 or response.status_code >= 500 or code in {
+            "temporarily_unavailable", "server_error",
+        }:
+            return GmailTransientError(
+                f"Google token service temporarily returned HTTP {response.status_code}; "
+                "automatic retry pending",
+                retry_at=gmail_retry_at(response),
+            )
+        # Provider descriptions can contain account or credential details. Persist only
+        # allowlisted error codes, never arbitrary response text.
+        message = f"Google rejected the {operation} ({code}, HTTP {response.status_code})"
         if code == "invalid_grant":
             return GmailReauthRequired(message, code=code)
         return GmailError(message, code=code)
@@ -297,10 +357,12 @@ class GmailClient:
         from mail_control.modules.mail.microsoft import MicrosoftGraphClient
 
         last_error: Exception | None = None
+        retry_at: datetime | None = None
         refreshed = False
         async with httpx.AsyncClient(base_url=GMAIL_API_URL, timeout=30) as client:
             attempt = 0
             while attempt < 4:
+                retry_at = None
                 try:
                     response = await bounded_request(
                         client, method, path, params=params, json=json, headers=self._headers
@@ -319,10 +381,10 @@ class GmailClient:
                     if response.status_code == 403:
                         try:
                             reasons = response.json().get("error", {}).get("errors", [])
-                            limited = any(item.get("reason") in {
+                            limited = any(isinstance(item, dict) and item.get("reason") in {
                                 "rateLimitExceeded", "userRateLimitExceeded"
                             } for item in reasons)
-                        except (ValueError, AttributeError):
+                        except (ValueError, AttributeError, TypeError):
                             pass
                     if response.status_code not in {429, 500, 502, 503, 504} and not limited:
                         response.raise_for_status()
@@ -331,18 +393,25 @@ class GmailClient:
                         f"Gmail temporarily returned {response.status_code}",
                         request=response.request, response=response,
                     )
+                    retry_at = gmail_retry_at(response)
+                    if retry_at and retry_at > datetime.now(UTC) + timedelta(seconds=30):
+                        raise GmailTransientError(
+                            f"Gmail temporarily returned HTTP {response.status_code}; "
+                            f"automatic retry after {retry_at.isoformat()}",
+                            retry_at=retry_at,
+                        ) from last_error
                 attempt += 1
                 if attempt >= 4:
                     break
-                retry_after = (
-                    last_error.response.headers.get("Retry-After")
-                    if isinstance(last_error, httpx.HTTPStatusError) else None
-                )
-                delay = MicrosoftGraphClient._retry_delay(retry_after, attempt - 1)
-                if delay > 30:
-                    # Preserve a long provider cooldown without tying up a worker.
-                    raise GmailTransientError(
-                        "Gmail requested a longer retry cooldown"
-                    ) from last_error
+                delay = MicrosoftGraphClient._retry_delay(None, attempt - 1)
+                if retry_at:
+                    delay = max(delay, (retry_at - datetime.now(UTC)).total_seconds())
                 await asyncio.sleep(delay)
-        raise GmailTransientError("Gmail remained unavailable after 4 attempts") from last_error
+        reason = (
+            f"HTTP {last_error.response.status_code}"
+            if isinstance(last_error, httpx.HTTPStatusError) else type(last_error).__name__
+        )
+        raise GmailTransientError(
+            f"Gmail remained unavailable after 4 attempts ({reason}); automatic retry pending",
+            retry_at=retry_at,
+        ) from last_error

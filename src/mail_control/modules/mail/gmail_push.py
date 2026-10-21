@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_object_session
 
 from mail_control.infrastructure.resources import Resources
+from mail_control.modules.mail.auth_state import AccountAuthorizationChanged, mark_reauth_if_current
 from mail_control.modules.mail.gmail import GmailClient, GmailError, GmailReauthRequired
 from mail_control.modules.mail.models import (
     AccountStatus,
@@ -23,7 +24,6 @@ from mail_control.modules.mail.models import (
 from mail_control.modules.mail.token_manager import provider_client
 from mail_control.modules.system.telegram_alerts import TelegramAlerts
 from mail_control.settings import Settings
-from mail_control.worker import mark_reauth_required
 
 logger = structlog.get_logger(__name__)
 
@@ -235,8 +235,11 @@ async def renew_due_gmail_watches(resources: Resources, settings: Settings) -> i
                 session.add(state)
                 await alerts.account_recovered(account)
                 renewed += 1
+            except AccountAuthorizationChanged:
+                continue
             except GmailReauthRequired as error:
-                mark_reauth_required(account, str(error))
+                if not await mark_reauth_if_current(session, account, error):
+                    continue
                 if state is None:
                     state = GmailWatchState(
                         tenant_id=account.tenant_id,

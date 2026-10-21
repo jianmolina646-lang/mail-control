@@ -49,8 +49,11 @@ class MailAccountService:
             )
             self.repository.add(account)
         else:
-            if encrypted_refresh_token:
-                account.encrypted_refresh_token = encrypted_refresh_token
+            # Fernet ciphertext is an opaque generation marker. Even when Google
+            # keeps its refresh token, a new consent must supersede older work.
+            account.encrypted_refresh_token = encrypted_refresh_token or self.cipher.encrypt(
+                self.cipher.decrypt(account.encrypted_refresh_token)
+            )
             account.encrypted_access_token = self.cipher.encrypt(tokens.access_token)
             account.access_token_expires_at = tokens.expires_at
             account.granted_scopes = tokens.scopes
@@ -61,6 +64,34 @@ class MailAccountService:
 
     async def profile_for_tokens(self, tokens: GoogleTokens) -> dict[str, object]:
         return await GmailClient(tokens.access_token).profile()
+
+    async def connect_gmail_imap(self, *, tenant_id: UUID, user_id: UUID,
+                                 email: str, app_password: str) -> MailAccount:
+        provider_account_id = email.strip().casefold()
+        account = await self.repository.account_by_provider_id(
+            tenant_id, provider_account_id, MailProvider.GMAIL,
+        )
+        encrypted_password = self.cipher.encrypt(app_password.replace(" ", ""))
+        if account is None:
+            account = MailAccount(
+                tenant_id=tenant_id, connected_by_user_id=user_id,
+                provider=MailProvider.GMAIL, provider_account_id=provider_account_id,
+                email=provider_account_id, encrypted_refresh_token=encrypted_password,
+                encrypted_access_token=None, access_token_expires_at=None,
+                granted_scopes=["imap"], status=AccountStatus.CONNECTED,
+                history_cursor=None,
+            )
+            self.repository.add(account)
+        else:
+            account.encrypted_refresh_token = encrypted_password
+            account.encrypted_access_token = None
+            account.access_token_expires_at = None
+            account.granted_scopes = ["imap"]
+            account.status = AccountStatus.CONNECTED
+            account.last_error = None
+            account.history_cursor = None
+        await self.repository.commit()
+        return account
 
     async def connect_microsoft(
         self,
@@ -97,8 +128,9 @@ class MailAccountService:
             )
             self.repository.add(account)
         else:
-            if encrypted_refresh_token:
-                account.encrypted_refresh_token = encrypted_refresh_token
+            account.encrypted_refresh_token = encrypted_refresh_token or self.cipher.encrypt(
+                self.cipher.decrypt(account.encrypted_refresh_token)
+            )
             account.email = email
             account.encrypted_access_token = self.cipher.encrypt(tokens.access_token)
             account.access_token_expires_at = tokens.expires_at

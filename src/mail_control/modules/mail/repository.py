@@ -9,7 +9,9 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.dml import ReturningInsert
 
+from mail_control.infrastructure.database.tenant import set_tenant_context
 from mail_control.modules.analysis.models import OutboxEvent, OutboxStatus
+from mail_control.modules.mail.auth_state import update_account_if_current
 from mail_control.modules.mail.models import (
     EmailMessage,
     MailAccount,
@@ -23,6 +25,12 @@ class MailRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
+    async def update_account_state(
+        self, account: MailAccount, values: dict[str, Any], error: Exception | None = None,
+    ) -> bool:
+        expected = getattr(error, "_mail_expected_grant", account.encrypted_refresh_token)
+        return await update_account_if_current(self.session, account, expected, values)
+
     async def account_by_provider_id(
         self,
         tenant_id: UUID,
@@ -34,7 +42,7 @@ class MailRepository:
                 MailAccount.tenant_id == tenant_id,
                 MailAccount.provider_account_id == provider_account_id,
                 MailAccount.provider == provider,
-            )
+            ).with_for_update().execution_options(populate_existing=True)
         )
         return result
 
@@ -71,6 +79,19 @@ class MailRepository:
     def add(self, entity: MailAccount | MailSyncCursor | SyncRun) -> None:
         self.session.add(entity)
 
+    async def delete_cursor(self, cursor: MailSyncCursor) -> None:
+        await self.session.delete(cursor)
+
+    async def active_provider_message_ids(self, account_id: UUID) -> set[str]:
+        """IDs to reconcile after a complete provider listing, not proof of deletion."""
+        rows = await self.session.scalars(
+            select(EmailMessage.provider_message_id).where(
+                EmailMessage.mail_account_id == account_id,
+                EmailMessage.deleted_at.is_(None),
+            )
+        )
+        return set(rows.all())
+
     async def mark_deleted(
         self,
         account_id: UUID,
@@ -85,6 +106,28 @@ class MailRepository:
             )
             .values(deleted_at=deleted_at)
         )
+
+    async def existing_provider_message_ids(
+        self,
+        account_id: UUID,
+        provider_message_ids: list[str],
+    ) -> set[str]:
+        """Return messages already imported for an account.
+
+        Initial Gmail imports can be interrupted by provider rate limits.  On a
+        retry Gmail starts the listing at the first page again, so checking the
+        persisted ids prevents downloading the same full messages repeatedly.
+        """
+        if not provider_message_ids:
+            return set()
+        rows = await self.session.scalars(
+            select(EmailMessage.provider_message_id).where(
+                EmailMessage.mail_account_id == account_id,
+                EmailMessage.provider_message_id.in_(provider_message_ids),
+                EmailMessage.deleted_at.is_(None),
+            )
+        )
+        return set(rows.all())
 
     async def upsert_message(self, values: dict[str, object]) -> bool:
         base_statement = insert(EmailMessage).values(**values)
@@ -143,3 +186,8 @@ class MailRepository:
 
     async def commit(self) -> None:
         await self.session.commit()
+
+    async def checkpoint(self, tenant_id: UUID) -> None:
+        """Keep tenant isolation active after committing an import page."""
+        await self.session.commit()
+        await set_tenant_context(self.session, tenant_id)

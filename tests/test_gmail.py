@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 
+import httpx
 import pytest
 
 from mail_control.modules.mail.gmail import (
@@ -11,6 +13,7 @@ from mail_control.modules.mail.gmail import (
     GmailError,
     GmailOAuth,
     GmailReauthRequired,
+    gmail_retry_at,
 )
 
 
@@ -28,6 +31,26 @@ class FakeRedis:
 
 def test_reauth_error_is_a_gmail_error() -> None:
     assert issubclass(GmailReauthRequired, GmailError)
+
+
+def test_google_rate_limit_deadline_is_parsed_from_error_message() -> None:
+    request = httpx.Request("GET", "https://gmail.googleapis.com/gmail/v1/users/me/profile")
+    response = httpx.Response(
+        429,
+        request=request,
+        json={
+            "error": {
+                "message": (
+                    "User-rate limit exceeded.  "
+                    "Retry after 2026-10-11T08:10:02.830Z"
+                )
+            }
+        },
+    )
+
+    assert gmail_retry_at(response) == datetime(
+        2026, 10, 11, 8, 10, 2, 830000, tzinfo=UTC
+    )
 
 
 @pytest.mark.asyncio

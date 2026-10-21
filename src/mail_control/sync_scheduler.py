@@ -20,6 +20,8 @@ from mail_control.settings import get_settings
 
 logger = structlog.get_logger(__name__)
 DEFAULT_INTERVAL_SECONDS = 300
+GMAIL_COOLDOWN_PREFIX = "mail:sync:cooldown:gmail:"
+MICROSOFT_COOLDOWN_PREFIX = "mail:sync:cooldown:microsoft:"
 
 
 def interval_seconds() -> int:
@@ -37,7 +39,9 @@ async def enqueue_due_accounts(resources: Resources, interval: int) -> int:
                     MailAccount.tenant_id,
                     MailAccount.provider,
                 ).where(
-                    MailAccount.status.in_((AccountStatus.CONNECTED, AccountStatus.ERROR)),
+                    MailAccount.status.in_(
+                        (AccountStatus.CONNECTED, AccountStatus.ERROR, AccountStatus.SYNCING)
+                    ),
                     (MailAccount.last_synced_at.is_(None) | (MailAccount.last_synced_at <= cutoff)),
                 )
             )
@@ -46,9 +50,42 @@ async def enqueue_due_accounts(resources: Resources, interval: int) -> int:
     if not accounts:
         return 0
 
+    # A worker can stop after committing an import page, leaving SYNCING in
+    # PostgreSQL. Recover it once its Redis lease expires, but never interrupt
+    # an import that still owns a lease. The worker acquires the same lock when
+    # consuming, so a race after this read cannot start a duplicate import.
+    lock_keys = [
+        f"sync:{provider.value}:{account_id}"
+        for account_id, _tenant_id, provider in accounts
+    ]
+    lock_values = await resources.redis.mget(lock_keys)
+    busy_accounts = {
+        account_id
+        for (account_id, _tenant_id, _provider), value
+        in zip(accounts, lock_values, strict=True)
+        if value is not None
+    }
+
+    cooldown_keys = [
+        f"mail:sync:cooldown:{provider.value}:{account_id}"
+        for account_id, _tenant_id, provider in accounts
+    ]
+    cooldown_values = await resources.redis.mget(cooldown_keys)
+    cooling_down = {
+        account_id
+        for (account_id, _tenant_id, _provider), value
+        in zip(accounts, cooldown_values, strict=True)
+        if value is not None
+    }
+
+    skipped_accounts = busy_accounts | cooling_down
+    ready_accounts = [account for account in accounts if account[0] not in skipped_accounts]
+    if not ready_accounts:
+        return 0
+
     channel = await resources.rabbitmq.channel()
     try:
-        for account_id, tenant_id, provider in accounts:
+        for account_id, tenant_id, provider in ready_accounts:
             routing_key = (
                 "mail.sync.gmail" if provider == MailProvider.GMAIL else "mail.sync.microsoft"
             )
@@ -66,7 +103,7 @@ async def enqueue_due_accounts(resources: Resources, interval: int) -> int:
             )
     finally:
         await channel.close()
-    return len(accounts)
+    return len(ready_accounts)
 
 
 async def run() -> None:

@@ -15,6 +15,7 @@ interface FolderNavProps {
   onApplyView?: (query: string) => void;
   activeView?: string | null;
   className?: string;
+  orientation?: "vertical" | "horizontal";
 }
 
 const groupOrder: FolderGroup[] = ["principal", "categorias", "sistema"];
@@ -42,12 +43,14 @@ export function FolderNav({
   onApplyView,
   activeView,
   className,
+  orientation = "vertical",
 }: FolderNavProps) {
+  const horizontal = orientation === "horizontal";
   return (
-    <nav className={cn("scroll-slim space-y-4 overflow-y-auto p-2", className)}>
+    <nav className={cn(horizontal ? "mail-folder-strip scroll-slim flex items-center gap-1 overflow-x-auto px-3 py-2" : "scroll-slim space-y-4 overflow-y-auto p-2", className)}>
       {groupOrder.map((group) => (
-        <div key={group} className="space-y-0.5">
-          <p className="px-2.5 pb-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground/70">
+        <div key={group} className={cn(horizontal ? "flex shrink-0 items-center gap-1" : "space-y-0.5")}>
+          <p className={cn("px-2.5 pb-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground/70", horizontal && "sr-only")}>
             {folderGroupLabels[group]}
           </p>
           {folders
@@ -63,7 +66,8 @@ export function FolderNav({
                   onClick={() => onSelect(folder.id)}
                   aria-current={active ? "true" : undefined}
                   className={cn(
-                    "mail-folder-item grid w-full grid-cols-[26px_minmax(0,1fr)_auto] items-center gap-2 rounded-lg px-2 py-1.5 text-[12.5px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
+                    "mail-folder-item items-center gap-2 rounded-lg px-2 py-1.5 text-[12.5px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
+                    horizontal ? "flex w-auto shrink-0 rounded-full pr-3" : "grid w-full grid-cols-[26px_minmax(0,1fr)_auto]",
                     active
                       ? "bg-primary/12 font-semibold text-primary"
                       : "text-muted-foreground hover:bg-surface-2 hover:text-foreground",
@@ -87,14 +91,15 @@ export function FolderNav({
               );
             })}
           {group === "sistema" && onApplyView && (
-            <div className="space-y-0.5 pt-1">
+            <div className={cn(horizontal ? "flex items-center gap-1 border-l border-border pl-2" : "space-y-0.5 pt-1")}>
               {savedViews.map((view) => (
                 <button
                   key={view.id}
                   type="button"
                   onClick={() => onApplyView(view.query)}
                   className={cn(
-                    "grid w-full grid-cols-[26px_minmax(0,1fr)] items-center gap-2 rounded-lg px-2 py-1.5 text-[12.5px] transition-colors",
+                    "items-center gap-2 rounded-lg px-2 py-1.5 text-[12.5px] transition-colors",
+                    horizontal ? "flex w-auto shrink-0 rounded-full pr-3" : "grid w-full grid-cols-[26px_minmax(0,1fr)]",
                     activeView === view.query
                       ? "bg-primary/12 font-semibold text-primary"
                       : "text-muted-foreground hover:bg-surface-2 hover:text-foreground",

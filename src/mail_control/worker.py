@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from contextlib import suppress
+from datetime import UTC, datetime
 from uuid import UUID
 
 import structlog
@@ -11,20 +12,30 @@ from redis.exceptions import LockError
 
 from mail_control.infrastructure.database.tenant import set_tenant_context
 from mail_control.infrastructure.resources import Resources
+from mail_control.modules.mail.auth_state import (
+    AccountAuthorizationChanged,
+    mark_reauth_if_current,
+)
+from mail_control.modules.mail.crypto import CredentialCipher
 from mail_control.modules.mail.gmail import (
     GmailClient,
     GmailError,
     GmailReauthRequired,
+    GmailTransientError,
 )
+from mail_control.modules.mail.imap import GmailImapClient, GmailImapError
 from mail_control.modules.mail.models import AccountStatus, MailAccount, MailProvider
 from mail_control.modules.mail.repository import MailRepository
-from mail_control.modules.mail.sync import GmailSyncService
+from mail_control.modules.mail.sync import GmailSyncService, ImapSyncService
 from mail_control.modules.mail.token_manager import AccountUnavailableError, provider_client
 from mail_control.modules.system.telegram_alerts import TelegramAlerts
 from mail_control.settings import Settings, get_settings
 
 logger = structlog.get_logger(__name__)
 REAUTH_REQUIRED_MESSAGE = "Google authorization expired; reconnect this Gmail account"
+GMAIL_COOLDOWN_PREFIX = "mail:sync:cooldown:gmail:"
+DEFAULT_TRANSIENT_COOLDOWN_SECONDS = 300
+GMAIL_RETRY_SAFETY_SECONDS = 300
 
 
 def mark_reauth_required(
@@ -57,24 +68,65 @@ async def process_message(
                 or account.status in {AccountStatus.DISCONNECTED, AccountStatus.REAUTH_REQUIRED}
             ):
                 return
+            cooldown_key = f"{GMAIL_COOLDOWN_PREFIX}{account.id}"
+            if await resources.redis.exists(cooldown_key):
+                return
             try:
+                if "imap" in account.granted_scopes:
+                    cipher = CredentialCipher(
+                        settings.credential_encryption_key or settings.app_secret_key
+                    )
+                    imap_client = GmailImapClient(
+                        account.email, cipher.decrypt(account.encrypted_refresh_token)
+                    )
+                    await ImapSyncService(repository).synchronize(account, imap_client)
+                    await TelegramAlerts(settings, resources.redis).account_recovered(account)
+                    return
                 client = await provider_client(account, session, resources, settings)
                 assert isinstance(client, GmailClient)
-            except AccountUnavailableError:
+            except (AccountUnavailableError, AccountAuthorizationChanged):
                 return
             except GmailReauthRequired as error:
-                mark_reauth_required(account, str(error))
+                applied = await mark_reauth_if_current(session, account, error)
                 await repository.commit()
+                if not applied:
+                    return
                 await TelegramAlerts(settings, resources.redis).account_issue(
                     account,
                     str(error),
                 )
                 logger.warning("gmail_reauthorization_required", account_id=str(account.id))
                 return
-            except GmailError as error:
-                account.status = AccountStatus.ERROR
-                account.last_error = str(error)
+            except GmailTransientError as error:
+                applied = await repository.update_account_state(account, {
+                    "status": AccountStatus.ERROR, "last_error": str(error),
+                }, error)
                 await repository.commit()
+                if not applied:
+                    return
+                now = datetime.now(UTC)
+                cooldown = DEFAULT_TRANSIENT_COOLDOWN_SECONDS
+                if error.retry_at is not None:
+                    cooldown = max(
+                        cooldown,
+                        int((error.retry_at - now).total_seconds())
+                        + GMAIL_RETRY_SAFETY_SECONDS,
+                    )
+                await resources.redis.set(cooldown_key, "1", ex=cooldown)
+                await TelegramAlerts(settings, resources.redis).account_issue(account, str(error))
+                logger.warning(
+                    "gmail_sync_cooldown_started",
+                    account_id=str(account.id),
+                    cooldown_seconds=cooldown,
+                )
+                return
+            except (GmailError, GmailImapError) as error:
+                applied = await repository.update_account_state(account, {
+                    "status": AccountStatus.ERROR, "last_error": str(error),
+                }, error)
+                await repository.commit()
+                if not applied:
+                    return
                 await TelegramAlerts(settings, resources.redis).account_issue(
                     account,
                     str(error),
@@ -83,11 +135,31 @@ async def process_message(
             alerts = TelegramAlerts(settings, resources.redis)
             try:
                 await GmailSyncService(repository).synchronize(account, client)
+            except AccountAuthorizationChanged:
+                return
             except GmailReauthRequired as error:
                 await set_tenant_context(session, tenant_id)
-                mark_reauth_required(account, str(error))
+                applied = await mark_reauth_if_current(session, account, error)
                 await repository.commit()
+                if applied:
+                    await alerts.account_issue(account, str(error))
+                return
+            except GmailTransientError as error:
+                now = datetime.now(UTC)
+                cooldown = DEFAULT_TRANSIENT_COOLDOWN_SECONDS
+                if error.retry_at is not None:
+                    cooldown = max(
+                        cooldown,
+                        int((error.retry_at - now).total_seconds())
+                        + GMAIL_RETRY_SAFETY_SECONDS,
+                    )
+                await resources.redis.set(cooldown_key, "1", ex=cooldown)
                 await alerts.account_issue(account, str(error))
+                logger.warning(
+                    "gmail_sync_cooldown_started",
+                    account_id=str(account.id),
+                    cooldown_seconds=cooldown,
+                )
                 return
             except Exception as error:
                 await alerts.account_issue(account, str(error))

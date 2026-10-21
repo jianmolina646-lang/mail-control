@@ -11,15 +11,21 @@ import {
   Sparkles,
   Star,
   Trash2,
+  Maximize2,
+  Minimize2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ProviderIcon } from "@/components/mail/provider-icon";
 import { cn } from "@/lib/utils";
 import { apiBlob } from "@/lib/api";
+import { useReadingPreference } from "@/lib/reading-preferences";
 import type { MailAccount, MailMessage } from "@/lib/mail-data";
 import type { Attachment } from "@/lib/types";
+import { extractCodes } from "@/lib/extract-codes";
 
 interface ReadingPaneProps {
+  expanded?: boolean;
+  onToggleExpand?: () => void;
   message: MailMessage | null;
   account?: MailAccount | undefined;
   thread: MailMessage[];
@@ -53,7 +59,12 @@ export function ReadingPane({
   loading, error, onRetry, threadLoading, threadError, onRetryThread, onOpenThread,
   hasMoreThread, loadingMoreThread, onLoadMoreThread, returnSearch,
   contentWarning, attachmentsError,
+  expanded, onToggleExpand,
 }: ReadingPaneProps) {
+  const [textOnly, setTextOnly] = useReadingPreference("text", false, [false, true]);
+  const [fontScale, setFontScale] = useReadingPreference<number>("scale", 1, [1, 1.15, 1.3, 1.5]);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { if (scrollRef.current) scrollRef.current.scrollTop = 0; }, [message?.id]);
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
   const codes = useMemo(() => message ? extractCodes(`${message.subject}\n${message.preview}\n${message.body}\n${stripHtml(message.bodyHtml ?? "")}`) : [], [message]);
   async function copyCode(code: string) {
@@ -78,18 +89,21 @@ export function ReadingPane({
   }
 
   return (
-    <article className="flex h-full min-h-0 flex-col bg-surface/20">
-      <div className="flex h-12 shrink-0 items-center gap-1 border-b border-border px-3 sm:px-4">
+    <article className="mail-reader flex h-full min-h-0 w-full min-w-0 flex-1 flex-col bg-surface/20">
+      <div className="mail-reader-toolbar flex shrink-0 items-center gap-1 border-b border-border px-3 sm:px-4">
         <ToolbarButton icon={ArrowLeft} label="Volver a la bandeja" onClick={onBack} />
         <ToolbarButton icon={Archive} label="Archivar" onClick={() => onArchive(message.id)} />
         <ToolbarButton icon={Trash2} label="Eliminar" onClick={() => onDelete(message.id)} />
-        <span className="ml-auto text-[11px] tabular-nums text-muted-foreground">
-          {message.date} · {message.time}
-        </span>
+        <div className="ml-auto flex flex-wrap items-center gap-1">
+          <button type="button" className="reader-control" aria-pressed={textOnly} onClick={() => setTextOnly(!textOnly)}>{textOnly ? "Ver original" : "Solo texto"}</button>
+          <label className="sr-only" htmlFor="reader-font-size">Tamaño de lectura</label>
+          <select id="reader-font-size" className="reader-control" value={fontScale} onChange={event => setFontScale(Number(event.target.value))}><option value={1}>100%</option><option value={1.15}>115%</option><option value={1.3}>130%</option><option value={1.5}>150%</option></select>
+          {onToggleExpand && <ToolbarButton icon={expanded ? Minimize2 : Maximize2} label={expanded ? "Salir de lectura ampliada" : "Ampliar lectura"} onClick={onToggleExpand} />}
+        </div>
       </div>
 
-      <div className="scroll-slim min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto w-full max-w-3xl px-5 py-5 sm:px-8 sm:py-7">
+      <div ref={scrollRef} className="mail-reader-scroll scroll-slim min-h-0 flex-1 overflow-y-auto">
+        <div className="mail-reader-document w-full max-w-none px-5 py-5 sm:px-8 sm:py-7">
           <div className="flex items-start gap-3">
             <div className="min-w-0 flex-1">
               <div className="mb-2 flex flex-wrap items-center gap-1.5">
@@ -126,10 +140,11 @@ export function ReadingPane({
               )}
             </span>
             <div className="min-w-0 flex-1 pt-0.5">
-              <p className="truncate text-[13.5px] font-semibold text-foreground">
+              <p className="break-words text-[13.5px] font-semibold text-foreground">
                 {message.senderName}
                 <span className="ml-1.5 font-normal text-muted-foreground">&lt;{message.sender}&gt;</span>
               </p>
+              <p className="mt-1 text-[12px] text-muted-foreground">{message.date} · {message.time}</p>
               <details className="group mt-0.5 text-[11.5px] text-muted-foreground">
                 <summary className="w-fit cursor-pointer list-none rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50">
                   para {message.to} <span aria-hidden="true">⌄</span>
@@ -155,11 +170,11 @@ export function ReadingPane({
 
           {contentWarning && <div role="alert" className="mt-5 rounded-xl border border-warning/30 bg-warning/10 p-3 text-[12px] text-foreground">{contentWarning} <button type="button" onClick={onRetry} className="underline">Reintentar contenido</button></div>}
           {attachmentsError && <div role="alert" className="mt-3 rounded-xl border border-warning/30 bg-warning/10 p-3 text-[12px] text-foreground">{attachmentsError} <button type="button" onClick={onRetry} className="underline">Reintentar adjuntos</button></div>}
-          {loading ? <p role="status" className="mt-7 text-sm text-muted-foreground">Cargando contenido completo…</p> : error ? <div role="alert" className="mt-7 rounded-xl border border-destructive/30 p-4 text-sm text-destructive">{error}<button type="button" className="ml-3 underline" onClick={onRetry}>Reintentar contenido</button></div> : message.bodyHtml ? (
-            <EmailHtml key={message.id} messageId={message.id} subject={message.subject} html={message.bodyHtml} attachments={message.attachments} />
+          {loading ? <p role="status" className="mt-7 text-sm text-muted-foreground">Cargando contenido completo…</p> : error ? <div role="alert" className="mt-7 rounded-xl border border-destructive/30 p-4 text-sm text-destructive">{error}<button type="button" className="ml-3 underline" onClick={onRetry}>Reintentar contenido</button></div> : message.bodyHtml && !textOnly ? (
+            <EmailHtml key={message.id} messageId={message.id} subject={message.subject} html={message.bodyHtml} attachments={message.attachments} fontScale={fontScale} />
           ) : (
-            <div className="mt-7 min-h-32 max-w-[72ch] whitespace-pre-wrap break-words text-[14.5px] leading-7 text-foreground/90">
-              {message.body}
+            <div style={{fontSize: 16 * fontScale, lineHeight: 1.75}} className="mt-7 min-h-32 max-w-[72ch] whitespace-pre-wrap break-words text-foreground/90">
+              {message.body || readableText(message.bodyHtml ?? "")}
             </div>
           )}
 
@@ -222,20 +237,21 @@ function stripHtml(html: string) {
   return html.replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<[^>]+>/g, " ").replace(/&nbsp;|&#160;/gi, " ");
 }
 
-function extractCodes(text: string) {
-  const context = text.replace(/\s+/g, " ");
-  const candidates = [...context.matchAll(/(?:c[oó]digo|code|pin|verification|verificaci[oó]n|inicio de sesi[oó]n)[^A-Z0-9]{0,40}([A-Z0-9](?:[ -]?[A-Z0-9]){3,9})/gi)]
-    .map((match) => match[1]?.replace(/[ -]/g, "").toUpperCase())
-    .filter((value): value is string => !!value && /\d/.test(value) && value.length >= 4 && value.length <= 10);
-  return [...new Set(candidates)].slice(0, 4);
+export function readableText(html: string) {
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  doc.querySelectorAll("script,style,head").forEach(el => el.remove());
+  doc.querySelectorAll("br,p,div,tr,h1,h2,h3,li").forEach(el => el.append(doc.createTextNode("\n")));
+  return (doc.body.textContent ?? "").replace(/\n[ \t]*\n(?:[ \t]*\n)+/g, "\n\n").trim();
 }
 
-export function EmailHtml({ messageId, subject, html, attachments }: { messageId: string; subject: string; html: string; attachments: Attachment[] }) {
+export function EmailHtml({ messageId, subject, html, attachments, fontScale = 1 }: { messageId: string; subject: string; html: string; attachments: Attachment[]; fontScale?: number }) {
   const [height, setHeight] = useState(420);
-  const [frameScrollable, setFrameScrollable] = useState(false);
   const [proxiedHtml, setProxiedHtml] = useState(html);
   const [loadingImages, setLoadingImages] = useState(true);
-  const [allowRemote, setAllowRemote] = useState(false);
+  // Las imágenes se solicitan mediante el proxy seguro del backend; el navegador
+  // nunca contacta directamente al remitente. Así el correo se muestra completo
+  // como en Gmail/Outlook sin exponer la IP del usuario.
+  const [allowRemote, setAllowRemote] = useState(true);
   const [imageErrors, setImageErrors] = useState(false);
   const [imageAttempt, setImageAttempt] = useState(0);
   const hasRemote = /<img\b[^>]*\bsrc\s*=\s*["']?https?:\/\//i.test(html);
@@ -299,9 +315,9 @@ export function EmailHtml({ messageId, subject, html, attachments }: { messageId
       document.documentElement.scrollHeight,
       document.body?.scrollHeight ?? 0,
     );
-    const maximumHeight = Math.max(480, Math.min(1800, window.innerHeight * 1.75));
-    setFrameScrollable(contentHeight > maximumHeight);
-    setHeight(Math.min(contentHeight, maximumHeight));
+    // El panel lector ya tiene su propio desplazamiento. El iframe debe crecer
+    // con el correo para evitar dos barras de scroll, como ocurre en Gmail.
+    setHeight(Math.min(contentHeight, 30000));
   }
 
   return (
@@ -312,10 +328,10 @@ export function EmailHtml({ messageId, subject, html, attachments }: { messageId
       <iframe
         ref={frameRef}
         title={`Contenido de ${subject}`}
-        srcDoc={emailDocument(proxiedHtml)}
+        srcDoc={emailDocument(proxiedHtml, fontScale)}
         sandbox="allow-same-origin allow-popups"
         referrerPolicy="no-referrer"
-        scrolling={frameScrollable ? "auto" : "no"}
+        scrolling="no"
         onLoad={() => {
           resizeFrame();
           const body = frameRef.current?.contentDocument?.body;
@@ -331,7 +347,8 @@ export function EmailHtml({ messageId, subject, html, attachments }: { messageId
   );
 }
 
-function emailDocument(html: string) {
+export function emailDocument(html: string, fontScale = 1) {
+  const scale = [1, 1.15, 1.3, 1.5].includes(fontScale) ? fontScale : 1;
   const document = new DOMParser().parseFromString(html, "text/html");
   document.querySelectorAll("script,iframe,object,embed,form,base,meta,link").forEach((element) => element.remove());
   document.querySelectorAll("*").forEach((element) => {
@@ -348,10 +365,14 @@ function emailDocument(html: string) {
     <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; font-src data:; media-src 'none'; object-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
-      html { color-scheme: light; background: #fff; }
-      body { margin: 0; padding: 24px; color: #202124; background: #fff; overflow-wrap: anywhere; }
-      img { max-width: 100%; height: auto; }
-      table { max-width: 100%; }
+      html { width: 100%; color-scheme: light; background: #fff; overflow: hidden; }
+      body { box-sizing: border-box; width: ${100 / scale}% !important; zoom: ${scale}; min-width: 0 !important; margin: 0; padding: 16px; font: 16px/1.65 Arial, sans-serif; color: #202124; background: #fff; overflow-wrap: anywhere; }
+      body > table, body > center, body > center > table, body > div { box-sizing: border-box; max-width: 100% !important; }
+      body > center { display: block; }
+      body > center > table, body > table { margin-left: 0 !important; margin-right: 0 !important; }
+      img { max-width: 100% !important; height: auto !important; }
+      table { max-width: 100% !important; }
+      td { max-width: 100%; overflow-wrap: anywhere; }
       pre { white-space: pre-wrap; }
     </style>`;
   if (/<head[\s>]/i.test(html)) {

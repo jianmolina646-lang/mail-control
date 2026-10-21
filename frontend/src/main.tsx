@@ -5,6 +5,7 @@ import { BrowserRouter } from "react-router-dom";
 import App from "./App";
 import "./styles.css";
 import "./lovable.css";
+import "./mail-readable.css";
 
 if (document.documentElement.dataset.theme !== "dark") {
   document.documentElement.dataset.theme = "light";

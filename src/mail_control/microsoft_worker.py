@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 from contextlib import suppress
+from datetime import UTC, datetime
+from math import ceil
 from uuid import UUID
 
 import structlog
@@ -11,6 +13,10 @@ from redis.exceptions import LockError
 
 from mail_control.infrastructure.database.tenant import set_tenant_context
 from mail_control.infrastructure.resources import Resources
+from mail_control.modules.mail.auth_state import (
+    AccountAuthorizationChanged,
+    mark_reauth_if_current,
+)
 from mail_control.modules.mail.microsoft import (
     MicrosoftError,
     MicrosoftGraphClient,
@@ -25,6 +31,22 @@ from mail_control.modules.system.telegram_alerts import TelegramAlerts
 from mail_control.settings import Settings, get_settings
 
 logger = structlog.get_logger(__name__)
+MICROSOFT_COOLDOWN_PREFIX = "mail:sync:cooldown:microsoft:"
+DEFAULT_TRANSIENT_COOLDOWN_SECONDS = 300
+
+
+async def start_transient_cooldown(
+    resources: Resources, account_id: UUID, error: MicrosoftTransientError,
+) -> int:
+    """Persist provider backoff so redeliveries and scheduler ticks cannot bypass it."""
+    cooldown = DEFAULT_TRANSIENT_COOLDOWN_SECONDS
+    if error.retry_at is not None:
+        cooldown = max(cooldown, ceil((error.retry_at - datetime.now(UTC)).total_seconds()) + 1)
+    await resources.redis.set(f"{MICROSOFT_COOLDOWN_PREFIX}{account_id}", "1", ex=cooldown)
+    logger.warning(
+        "microsoft_sync_cooldown_started", account_id=str(account_id), cooldown_seconds=cooldown,
+    )
+    return cooldown
 
 
 async def process_message(
@@ -48,23 +70,38 @@ async def process_message(
                 or account.status in {AccountStatus.DISCONNECTED, AccountStatus.REAUTH_REQUIRED}
             ):
                 return
+            if await resources.redis.exists(f"{MICROSOFT_COOLDOWN_PREFIX}{account.id}"):
+                return
             try:
                 client = await provider_client(account, session, resources, settings)
                 assert isinstance(client, MicrosoftGraphClient)
-            except AccountUnavailableError:
+            except (AccountUnavailableError, AccountAuthorizationChanged):
                 return
             except MicrosoftReauthorizationRequired as error:
-                account.status = AccountStatus.REAUTH_REQUIRED
-                account.last_error = str(error)
-                account.encrypted_access_token = None
-                account.access_token_expires_at = None
+                applied = await mark_reauth_if_current(session, account, error)
                 await repository.commit()
+                if applied:
+                    await TelegramAlerts(settings, resources.redis).account_issue(
+                        account, str(error),
+                    )
+                return
+            except MicrosoftTransientError as error:
+                applied = await repository.update_account_state(account, {
+                    "status": AccountStatus.ERROR, "last_error": str(error),
+                }, error)
+                await repository.commit()
+                if not applied:
+                    return
+                await start_transient_cooldown(resources, account.id, error)
                 await TelegramAlerts(settings, resources.redis).account_issue(account, str(error))
                 return
             except MicrosoftError as error:
-                account.status = AccountStatus.ERROR
-                account.last_error = str(error)
+                applied = await repository.update_account_state(account, {
+                    "status": AccountStatus.ERROR, "last_error": str(error),
+                }, error)
                 await repository.commit()
+                if not applied:
+                    return
                 await TelegramAlerts(settings, resources.redis).account_issue(account, str(error))
                 raise
             alerts = TelegramAlerts(settings, resources.redis)
@@ -73,16 +110,19 @@ async def process_message(
                     account,
                     client,
                 )
+            except AccountAuthorizationChanged:
+                return
             except MicrosoftReauthorizationRequired as error:
                 await set_tenant_context(session, tenant_id)
-                account.status = AccountStatus.REAUTH_REQUIRED
-                account.encrypted_access_token = None
-                account.access_token_expires_at = None
+                applied = await mark_reauth_if_current(session, account, error)
                 await repository.commit()
+                if applied:
+                    await alerts.account_issue(account, str(error))
+                return
+            except MicrosoftTransientError as error:
+                await start_transient_cooldown(resources, account.id, error)
                 await alerts.account_issue(account, str(error))
                 return
-            except MicrosoftTransientError:
-                raise
             except Exception as error:
                 await alerts.account_issue(account, str(error))
                 raise

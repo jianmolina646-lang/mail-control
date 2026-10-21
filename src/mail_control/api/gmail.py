@@ -24,11 +24,13 @@ from mail_control.api.mail_oauth import (
 from mail_control.modules.identity.models import RoleName
 from mail_control.modules.mail.crypto import CredentialCipher
 from mail_control.modules.mail.gmail import GmailError, GmailOAuth
+from mail_control.modules.mail.imap import GmailImapClient, GmailImapError
 from mail_control.modules.mail.models import AccountStatus, MailProvider
 from mail_control.modules.mail.repository import MailRepository
 from mail_control.modules.mail.schemas import (
     AuthorizationRequest,
     AuthorizationUrlResponse,
+    ImapConnectionRequest,
 )
 from mail_control.modules.mail.service import MailAccountService
 from mail_control.settings import Settings, get_settings
@@ -36,6 +38,31 @@ from mail_control.settings import Settings, get_settings
 router = APIRouter(prefix="/v1/providers/gmail", tags=["gmail"])
 OperatorPrincipal = Annotated[Principal, Depends(require_role(RoleName.OPERATOR))]
 logger = structlog.get_logger(__name__)
+
+
+@router.post("/imap", status_code=status.HTTP_201_CREATED)
+async def connect_imap(
+    payload: ImapConnectionRequest,
+    request: Request,
+    principal: OperatorPrincipal,
+    session: Annotated[AsyncSession, Depends(database_session)],
+) -> dict[str, str]:
+    client = GmailImapClient(payload.email, payload.app_password)
+    try:
+        await client.verify()
+    except GmailImapError as error:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(error)) from error
+    settings = get_settings()
+    service = MailAccountService(
+        MailRepository(session),
+        CredentialCipher(settings.credential_encryption_key or settings.app_secret_key),
+    )
+    account = await service.connect_gmail_imap(
+        tenant_id=principal.claims.tenant_id, user_id=principal.claims.user_id,
+        email=payload.email, app_password=payload.app_password,
+    )
+    await enqueue(request, account.tenant_id, account.id)
+    return {"id": str(account.id), "status": "connected"}
 
 
 def configured_oauth(request: Request, settings: Settings) -> GmailOAuth:

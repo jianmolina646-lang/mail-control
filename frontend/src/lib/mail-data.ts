@@ -28,7 +28,7 @@ export type SyncStatus = "conectada" | "sincronizando" | "requiere-autorizacion"
 export const providerLabels: Record<Provider, string> = { gmail: "Gmail", outlook: "Outlook", hotmail: "Hotmail", live: "Live" };
 export const syncStatusLabels: Record<SyncStatus, string> = { conectada: "Conectada", sincronizando: "Sincronizando", "requiere-autorizacion": "Requiere autorización", "credenciales-vencidas": "Credenciales vencidas", error: "Error de sincronización", pausada: "Pausada" };
 export const attentionStatuses: SyncStatus[] = ["requiere-autorizacion", "credenciales-vencidas", "error", "pausada"];
-export interface MailAccount { id: string; alias: string; email: string; provider: Provider; client: string; platform: string; group: string; country: string; labels: string[]; favorite: boolean; status: SyncStatus; lastSync: string; syncStale?: boolean; messageCount: number; statusDetail?: string; }
+export interface MailAccount { id: string; alias: string; email: string; provider: Provider; client: string; platform: string; group: string; country: string; labels: string[]; favorite: boolean; status: SyncStatus; lastSync: string; syncStale?: boolean; syncPending?: boolean; messageCount: number; statusDetail?: string; }
 
 export type Risk = "alto" | "medio" | "bajo";
 export interface ThreadEntry { id: string; senderName: string; date: string; body: string; }
