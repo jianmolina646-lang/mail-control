@@ -98,7 +98,7 @@ export function ReadingPane({
           <button type="button" className="reader-control" aria-pressed={textOnly} onClick={() => setTextOnly(!textOnly)}>{textOnly ? "Ver original" : "Solo texto"}</button>
           <label className="sr-only" htmlFor="reader-font-size">Tamaño de lectura</label>
           <select id="reader-font-size" className="reader-control" value={fontScale} onChange={event => setFontScale(Number(event.target.value))}><option value={1}>100%</option><option value={1.15}>115%</option><option value={1.3}>130%</option><option value={1.5}>150%</option></select>
-          {onToggleExpand && <ToolbarButton icon={expanded ? Minimize2 : Maximize2} label={expanded ? "Salir de lectura ampliada" : "Ampliar lectura"} onClick={onToggleExpand} />}
+          {onToggleExpand && <button type="button" className="reader-control reader-expand-label" aria-pressed={expanded} onClick={onToggleExpand}>{expanded ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}{expanded ? "Volver a vista dividida" : "Ampliar lectura"}</button>}
         </div>
       </div>
 

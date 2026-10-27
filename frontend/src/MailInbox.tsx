@@ -33,6 +33,7 @@ export function MailInbox() {
   const [rawQuery, setRawQuery] = useState(query);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [readerExpanded, setReaderExpanded] = useState(false);
+  const [foldersHidden, setFoldersHidden] = useReadingPreference("folders-hidden", true, [false, true]);
   useEffect(() => { if (!selectedId) setReaderExpanded(false); }, [selectedId]);
   const [selectedSeed, setSelectedSeed] = useState<MailMessage | null>(null);
   const [threadRoot, setThreadRoot] = useState<{ id: string; accountId: string } | null>(null);
@@ -192,7 +193,10 @@ export function MailInbox() {
   const folderLabel = folders.find((item) => item.id === folder)?.label ?? "Todos";
   const filtersPanel = <div className="space-y-4 p-4"><p className="text-[12px] text-muted-foreground">Los filtros se aplican a todos los mensajes sincronizados.</p><div className="flex flex-wrap gap-1.5">{[["No leídos", "estado:no-leido"], ["Riesgo alto", "riesgo:alto"], ["Gmail", "proveedor:gmail"], ["Outlook", "proveedor:outlook"], ["Hotmail", "proveedor:hotmail"], ["Live", "proveedor:live"], ["Pagos", "categoria:pagos"], ["Seguridad", "categoria:seguridad"]].map(([label, value]) => <button key={value} type="button" onClick={() => setRawQuery((previous) => previous.includes(value) ? previous : `${previous} ${value}`.trim())} className="rounded-lg border border-border px-3 py-1.5 text-[12px] text-muted-foreground hover:text-foreground">{label}</button>)}</div><p className="text-[11px] font-semibold text-muted-foreground">Vistas guardadas</p><div className="flex flex-wrap gap-1.5">{savedViews.map((view) => <button key={view.id} type="button" onClick={() => setRawQuery(view.query)} className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-[12px] text-muted-foreground"><Bookmark className="size-3" />{view.label}</button>)}</div><p className="text-[11px] leading-relaxed text-muted-foreground">Operadores: cuenta:, correo:, proveedor:, plataforma:, categoria:, estado:, riesgo:, desde:AAAA-MM-DD, hasta:AAAA-MM-DD, de:, para:, tiene:adjuntos</p></div>;
 
-  return <main data-density={density} data-reader-expanded={readerExpanded} data-message-selected={!!selected} className="sleek-mail mail-inbox-live mail-inbox-classic mail-readable fixed inset-0 z-[70] flex h-[100dvh] w-full overflow-hidden bg-background">
+  const selectedRowIndex = rows.findIndex(row => row.message.id === selectedId || (row.message.accountId === selected?.accountId && row.message.threadId === selected?.threadId));
+  const previousRow = selectedRowIndex > 0 ? rows[selectedRowIndex - 1] : undefined;
+  const nextRow = selectedRowIndex >= 0 ? rows[selectedRowIndex + 1] : undefined;
+  return <main data-folders-hidden={foldersHidden} data-density={density} data-reader-expanded={readerExpanded} data-message-selected={!!selected} className="sleek-mail mail-inbox-live mail-inbox-classic mail-readable fixed inset-0 z-[70] flex h-[100dvh] w-full overflow-hidden bg-background">
     <AppSidebar compact className="hidden lg:flex" />
     <div className="flex min-w-0 flex-1 flex-col">
       <header className="mail-inbox-header grid min-h-16 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-border px-4 py-3 sm:px-5">
@@ -205,6 +209,15 @@ export function MailInbox() {
       {(showOverview || problemAccounts.length > 0 || hasPendingSync) && <div className="max-h-[28vh] space-y-3 overflow-y-auto border-b border-border px-4 py-3 sm:px-6">{showOverview && countsQuery.data && <MetricsGrid metrics={metrics} />}<SyncAlerts showAll={showOverview} accounts={accountId ? accounts.filter(a => a.id === accountId) : accounts} onSelectAccount={selectAccount} onRetry={canManage ? syncAccount : undefined} onReauthorize={canManage ? reauthorize : undefined} onConfigure={() => navigate("/cuentas")} /></div>}
       {accountsQuery.isError && <ErrorNotice text="No se pudieron cargar las cuentas." retry={() => void accountsQuery.refetch()} />}
       {countsQuery.isError && <ErrorNotice text="No se pudieron actualizar los contadores." retry={() => void countsQuery.refetch()} />}
+      <nav className="mail-comfort-controls" aria-label="Vista y navegación de mensajes">
+        <button type="button" className="mail-folders-toggle" aria-expanded={!foldersHidden} onClick={() => setFoldersHidden(!foldersHidden)}><PanelLeft className="size-4" />{foldersHidden ? "Mostrar carpetas" : "Ocultar carpetas"}</button>
+        <span className="mail-comfort-account" title={selectedAccount?.email ?? (accountId ? accountById.get(accountId)?.email : "Bandeja unificada")}>{selectedAccount?.email ?? (accountId ? accountById.get(accountId)?.email : "Bandeja unificada")}</span>
+        {selected && <div className="mail-comfort-navigation">
+          <button type="button" disabled={!previousRow} onClick={() => { if (previousRow) openMessage(previousRow.message.id); }}>← Anterior</button>
+          <span aria-live="polite">{selectedRowIndex >= 0 ? `${selectedRowIndex + 1} de ${rows.length}` : "Conversación"}</span>
+          <button type="button" disabled={!nextRow} onClick={() => { if (nextRow) openMessage(nextRow.message.id); }}>Siguiente →</button>
+        </div>}
+      </nav>
       <div className="mail-workbench flex min-h-0 flex-1">
         <aside className="mail-folder-rail" aria-label="Carpetas y filtros de correo">
           <div className="mail-folder-rail-heading"><span>MAIL CONTROL</span><h2>Tu correo</h2><p>{folderLabel}</p></div>
